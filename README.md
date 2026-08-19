@@ -22,8 +22,6 @@ a monthly lottery, and member debits with automatically doubling monthly interes
 The app now requires login. On first run it creates one default admin account:
 
 ```
-username: admin
-password: admin123
 ```
 
 **Change this password immediately** after first login — go to *My Account* in the
@@ -64,7 +62,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open http://localhost:5000 — a JSON data file (`data/money_mafia.json`) is created
+Open http://localhost:5005 — a JSON data file (`data/money_mafia.json`) is created
 automatically on first run, seeded with 14 placeholder members you can rename from
 the Members tab. There's no database server or driver involved — all data (members,
 contributions, debits, winners, activity log) lives in that one file.
