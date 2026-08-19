@@ -1,11 +1,18 @@
 """
-Lightweight JSON-file persistence layer for Money Mafia — Kuri Ledger.
+Persistence layer for Money Mafia — Kuri Ledger.
 
-Replaces the old Flask-SQLAlchemy/SQLite models with a single human-readable
-JSON file (data/money_mafia.json). Every entity is stored as a plain dict in
-that file and handed back to the app as a SimpleNamespace so the existing
-templates (which use dot-notation like `d.member.name`) keep working
-unchanged.
+Two interchangeable backends, chosen automatically:
+
+- Local JSON file (default) — data/money_mafia.json. Simple, human-readable,
+  perfect for running on your own server/VPS where the disk sticks around.
+- MongoDB (when the MONGODB_URI environment variable is set) — the same data,
+  stored as one document in a free MongoDB Atlas cluster. Use this when
+  deploying somewhere with an ephemeral filesystem (e.g. Render's free tier),
+  where a local file would get wiped on every redeploy/restart/spin-down.
+
+Either way, the rest of the app is unaffected: every entity is handed back as
+a SimpleNamespace so templates (which use dot-notation like `d.member.name`)
+keep working unchanged.
 
 This is intentionally simple, not a general-purpose ORM: it re-reads/re-scans
 lists on every query, which is fine at this scale (a few dozen members and a
@@ -22,6 +29,8 @@ from werkzeug.security import generate_password_hash
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DATA_FILE = os.environ.get('DATA_FILE', os.path.join(BASE_DIR, 'data', 'money_mafia.json'))
+MONGODB_URI = os.environ.get('MONGODB_URI')  # set this to switch to the MongoDB backend
+MONGODB_DB_NAME = os.environ.get('MONGODB_DB_NAME', 'money_mafia')
 
 _lock = threading.Lock()
 
@@ -95,16 +104,34 @@ def _default_data():
 
 
 class Store:
-    def __init__(self, path=DATA_FILE):
+    def __init__(self, path=DATA_FILE, mongo_uri=MONGODB_URI):
         self.path = path
         self._data = None
+        self._collection = None
+        if mongo_uri:
+            from pymongo import MongoClient
+            client = MongoClient(mongo_uri, serverSelectionTimeoutMS=8000)
+            self._collection = client[MONGODB_DB_NAME]['app_data']
         self._load()
         self._migrate()
         self._seed_members_if_empty()
         self._seed_admin_if_empty()
 
-    # ---------------- file I/O ----------------
+    @property
+    def using_mongo(self):
+        return self._collection is not None
+
+    # ---------------- storage I/O ----------------
     def _load(self):
+        if self.using_mongo:
+            doc = self._collection.find_one({'_id': 'main'})
+            if doc:
+                doc.pop('_id', None)
+                self._data = doc
+            else:
+                self._data = _default_data()
+                self.save()
+            return
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         if os.path.exists(self.path):
             with open(self.path, encoding='utf-8') as f:
@@ -112,6 +139,18 @@ class Store:
         else:
             self._data = _default_data()
             self.save()
+
+    def save(self):
+        with _lock:
+            if self.using_mongo:
+                doc = dict(self._data)
+                doc['_id'] = 'main'
+                self._collection.replace_one({'_id': 'main'}, doc, upsert=True)
+                return
+            tmp = self.path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(self._data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, self.path)
 
     def _migrate(self):
         """Backfill keys added after older data files were created."""
@@ -128,13 +167,6 @@ class Store:
                 changed = True
         if changed:
             self.save()
-
-    def save(self):
-        with _lock:
-            tmp = self.path + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(self._data, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, self.path)
 
     def _next_id(self, table):
         nid = self._data['next_id'][table]
