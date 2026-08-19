@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><h2>Lottery / Winners</h2><div class="sub">Each month on the {{ settings.lottery_day }}, a lot is drawn and ₹{{ '{:,.0f}'.format(settings.lottery) }} is awarded.</div></div>
+{% if is_admin %}
+<div class="panel">
+  <h3>Record This Month's Winner</h3>
+  <form method="post" action="{{ url_for('add_winner') }}">
+    <div class="row">
+      <div class="field"><label>Winner</label>
+        <select name="member_id">
+          {% for m in members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field"><label>Month</label><input name="month" type="month" value="{{ this_month }}"></div>
+      <div class="field"><label>Prize Amount (₹)</label><input name="amount" type="number" value="{{ settings.lottery }}"></div>
+      <div class="field"><label>Date</label><input name="date" type="date" value="{{ today }}"></div>
+    </div>
+    <div class="field" style="max-width:340px;">
+      <label><input type="checkbox" name="close_debit" style="width:auto;display:inline-block;margin-right:6px;">Close winner's pending debits first (optional)</label>
+    </div>
+    <button class="btn brass" type="submit">Record Winner</button>
+  </form>
+  <div class="hint">If checked, outstanding debits are settled from the prize before cash is handed over.</div>
+</div>
+{% else %}
+<div class="view-only-note">You have view-only access — recording a winner is restricted to admins.</div>
+{% endif %}
+<div class="panel">
+  <h3>Winner History</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Month</th><th>Winner</th><th>Prize</th><th>Debit Closed</th><th>Cash Given</th><th>Date</th></tr></thead>
+    <tbody>
+    {% for w in winners %}
+      <tr>
+        <td>{{ w.month }}</td>
+        <td>{{ w.member.name }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(w.amount) }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(w.debit_closed) }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(w.cash_given) }}</td>
+        <td class="nowrap">{{ w.date }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="empty">No winners recorded yet</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

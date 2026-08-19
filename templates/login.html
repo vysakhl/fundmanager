@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in — Money Mafia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="brand-center">
+      <div class="mark">₹</div>
+      <div class="group-name">Money Mafia</div>
+      <h1>Kuri Ledger</h1>
+    </div>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="flash">{% for m in messages %}<div>{{ m }}</div>{% endfor %}</div>
+      {% endif %}
+    {% endwith %}
+    <form method="post">
+      <div class="field"><label>Username</label><input name="username" autofocus required></div>
+      <div class="field"><label>Password</label><input name="password" type="password" required></div>
+      <button class="btn brass" type="submit">Sign In</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

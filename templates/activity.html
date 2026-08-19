@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><h2>Activity Log</h2><div class="sub">Full record of every action taken in the ledger</div></div>
+<div class="panel">
+  <form method="get" action="{{ url_for('activity') }}" class="row" style="margin-bottom:16px;align-items:flex-end;">
+    <div class="field" style="max-width:360px;">
+      <label>Search</label>
+      <input name="q" value="{{ q }}" placeholder="Search activity (member name, action, amount...)">
+    </div>
+    <button class="btn ghost" type="submit">Search</button>
+    {% if q %}<a class="btn ghost" href="{{ url_for('activity') }}">Clear</a>{% endif %}
+  </form>
+  <div class="table-wrap"><table>
+    <thead><tr><th style="width:190px;">When</th><th>Activity</th></tr></thead>
+    <tbody>
+    {% for log in logs %}
+      <tr>
+        <td class="num">{{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>{{ log.description }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="2" class="empty">{% if q %}No activity matches "{{ q }}"{% else %}No activity recorded yet{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

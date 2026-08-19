@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <h2>Dashboard</h2>
+  <div class="sub">Live overview of the group's savings fund — {{ total_members }} members</div>
+</div>
+<div class="grid cards">
+  <div class="card"><div class="lbl">Savings Fund Balance</div><div class="val forest num">₹{{ '{:,.2f}'.format(settings.fund_balance) }}</div></div>
+  <div class="card"><div class="lbl">Total Contributions Collected</div><div class="val num">₹{{ '{:,.2f}'.format(total_contrib_amount) }}</div></div>
+  <div class="card"><div class="lbl">Outstanding Debits</div><div class="val num {{ 'rust' if total_outstanding > 0 else '' }}">₹{{ '{:,.2f}'.format(total_outstanding) }}</div></div>
+  <div class="card"><div class="lbl">Interest Outstanding</div><div class="val num {{ 'rust' if total_interest_outstanding > 0 else '' }}">₹{{ '{:,.2f}'.format(total_interest_outstanding) }}</div></div>
+  <div class="card"><div class="lbl">Overdue Members (&gt;2 mo)</div><div class="val num {{ 'rust' if overdue_count > 0 else '' }}">{{ overdue_count }}</div></div>
+  <div class="card"><div class="lbl">{{ this_month }} Paid</div><div class="val num">{{ paid_this_month }} / {{ total_members }}</div></div>
+</div>
+
+<div class="panel">
+  <h3>Members — Debit &amp; Contribution Status</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Member</th><th>This Month</th><th>Debit Balance</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for r in member_rows %}
+      <tr class="{{ 'flag' if r.overdue else '' }}">
+        <td>{{ r.member.name }}</td>
+        <td>{% if r.paid %}<span class="tag ok">Paid</span>{% else %}<span class="tag warn">Pending</span>{% endif %}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(r.outstanding) }}</td>
+        <td>
+          {% if r.overdue %}<span class="tag warn">Overdue &gt; 2 mo</span>
+          {% elif r.outstanding > 0 %}<span class="tag due">Active</span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">No members yet</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<div class="panel">
+  <h3>Recent Lottery Winners</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Month</th><th>Winner</th><th>Prize</th><th>Debit Closed</th><th>Cash Given</th></tr></thead>
+    <tbody>
+    {% for w in recent_winners %}
+      <tr>
+        <td>{{ w.month }}</td>
+        <td>{{ w.member.name }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(w.amount) }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(w.debit_closed) }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(w.cash_given) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">No winners recorded yet</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

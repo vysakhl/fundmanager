@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Money Mafia — Kuri Ledger{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <button class="hamburger" id="menuToggle" aria-label="Open menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="topbar-brand">
+      <span class="mark">₹</span>
+      <span class="group-name">Money Mafia</span>
+    </div>
+    <div class="topbar-balance num">₹{{ '{:,.2f}'.format(settings.fund_balance) }}</div>
+  </div>
+  <div class="overlay" id="overlay"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="mark">₹</div>
+      <div class="group-name">Money Mafia</div>
+      <h1>Kuri Ledger</h1>
+      <p class="caption">Paisa Varum, Paisa Pokum..</p>
+    </div>
+    <nav>
+      <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' else '' }}"><span class="n">01</span>Dashboard</a>
+      <a href="{{ url_for('members') }}" class="{{ 'active' if active=='members' else '' }}"><span class="n">02</span>Members</a>
+      <a href="{{ url_for('contributions') }}" class="{{ 'active' if active=='contributions' else '' }}"><span class="n">03</span>Contributions</a>
+      <a href="{{ url_for('debits') }}" class="{{ 'active' if active=='debits' else '' }}"><span class="n">04</span>Debits</a>
+      <a href="{{ url_for('winners') }}" class="{{ 'active' if active=='winners' else '' }}"><span class="n">05</span>Lottery / Winners</a>
+      {% if is_admin %}
+      <a href="{{ url_for('settings_view') }}" class="{{ 'active' if active=='settings' else '' }}"><span class="n">06</span>Settings</a>
+      {% endif %}
+      <a href="{{ url_for('rules_view') }}" class="{{ 'active' if active=='rules' else '' }}"><span class="n">07</span>Rules</a>
+      <a href="{{ url_for('activity') }}" class="{{ 'active' if active=='activity' else '' }}"><span class="n">08</span>Activity Log</a>
+      {% if is_admin %}
+      <a href="{{ url_for('users_view') }}" class="{{ 'active' if active=='users' else '' }}"><span class="n">09</span>Logins</a>
+      {% endif %}
+      <a href="{{ url_for('account') }}" class="{{ 'active' if active=='account' else '' }}"><span class="n">10</span>My Account</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="lbl">Savings Fund Balance</div>
+      <div class="amt num">₹{{ '{:,.2f}'.format(settings.fund_balance) }}</div>
+    </div>
+    {% if current_user %}
+    <div class="sidebar-account">
+      <div class="who">{{ current_user.username }} <span class="role-badge {{ current_user.role }}">{{ current_user.role }}</span></div>
+      <form method="post" action="{{ url_for('logout') }}">
+        <button class="btn ghost small" type="submit">Log Out</button>
+      </form>
+    </div>
+    {% endif %}
+  </aside>
+  <main>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="flash">{% for m in messages %}<div>{{ m }}</div>{% endfor %}</div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script>
+(function(){
+  var sidebar = document.getElementById('sidebar');
+  var overlay = document.getElementById('overlay');
+  var toggle = document.getElementById('menuToggle');
+  function closeMenu(){
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+    toggle.setAttribute('aria-expanded','false');
+  }
+  function openMenu(){
+    sidebar.classList.add('open');
+    overlay.classList.add('open');
+    toggle.setAttribute('aria-expanded','true');
+  }
+  toggle.addEventListener('click', function(){
+    sidebar.classList.contains('open') ? closeMenu() : openMenu();
+  });
+  overlay.addEventListener('click', closeMenu);
+  sidebar.querySelectorAll('nav a').forEach(function(a){
+    a.addEventListener('click', closeMenu);
+  });
+})();
+</script>
+</body>
+</html>

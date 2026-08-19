@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ code }} — Money Mafia</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card" style="text-align:center;">
+    <div class="brand-center">
+      <div class="mark">₹</div>
+      <div class="group-name">Money Mafia</div>
+      <h1>{{ code }}</h1>
+    </div>
+    <p style="color:var(--slate);font-size:14px;">{{ message }}</p>
+    <a class="btn brass" href="{{ url_for('dashboard') }}" style="display:block;text-decoration:none;box-sizing:border-box;">Back to Dashboard</a>
+  </div>
+</div>
+</body>
+</html>

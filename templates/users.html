@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><h2>Logins</h2><div class="sub">Create view-only logins for members, or additional admins</div></div>
+<div class="panel">
+  <h3>Add a Login</h3>
+  <form method="post" action="{{ url_for('add_user') }}">
+    <div class="row">
+      <div class="field"><label>Username</label><input name="username" required></div>
+      <div class="field"><label>Password</label><input name="password" type="password" minlength="6" required></div>
+      <div class="field"><label>Role</label>
+        <select name="role">
+          <option value="viewer">Viewer (read-only)</option>
+          <option value="admin">Admin (full control)</option>
+        </select>
+      </div>
+      <div class="field"><label>Linked Member (optional)</label>
+        <select name="member_id">
+          <option value="">— none —</option>
+          {% for m in members %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <button class="btn brass" type="submit">Create Login</button>
+  </form>
+  <div class="hint">Viewer logins can see every page but cannot add debits, record contributions, edit settings, or make any other change.</div>
+</div>
+<div class="panel">
+  <h3>All Logins ({{ users|length }})</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Username</th><th>Role</th><th>Linked Member</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td>{{ u.username }}</td>
+        <td><span class="role-badge {{ u.role }}">{{ u.role }}</span></td>
+        <td>
+          {% if u.member_id %}
+            {% for m in members %}{% if m.id == u.member_id %}{{ m.name }}{% endif %}{% endfor %}
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          <div class="action-group">
+            <form method="post" action="{{ url_for('reset_user_password', user_id=u.id) }}" onsubmit="return resetPrompt(event, this)">
+              <input type="hidden" name="password" value="">
+              <button class="btn ghost small" type="submit">Reset Password</button>
+            </form>
+            <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}" onsubmit="return confirm('Remove this login?');">
+              <button class="btn danger small" type="submit">Remove</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">No logins yet</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+<script>
+function resetPrompt(e, form){
+  const pw = prompt('New password (min 6 characters):');
+  if(!pw || pw.length < 6){ if(pw){ alert('Password must be at least 6 characters.'); } return false; }
+  form.querySelector('input[name=password]').value = pw;
+  return true;
+}
+</script>
+{% endblock %}

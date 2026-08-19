@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><h2>Rules</h2><div class="sub">Shared with the group</div></div>
+<div class="panel">
+  {% if is_admin %}
+  <form method="post" action="{{ url_for('rules_view') }}">
+    <textarea name="rules_text" style="width:100%;min-height:340px;font-family:'IBM Plex Mono';font-size:13px;padding:12px;border:1px solid var(--line);border-radius:6px;">{{ settings.rules_text }}</textarea>
+    <div class="divider"></div>
+    <button class="btn brass small" type="submit">Save Rules</button>
+  </form>
+  {% else %}
+  <textarea readonly style="width:100%;min-height:340px;font-family:'IBM Plex Mono';font-size:13px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--paper-dark);">{{ settings.rules_text }}</textarea>
+  {% endif %}
+</div>
+{% endblock %}

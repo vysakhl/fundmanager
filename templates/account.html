@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><h2>My Account</h2><div class="sub">Signed in as {{ current_user.username }} <span class="role-badge {{ current_user.role }}">{{ current_user.role }}</span></div></div>
+<div class="panel">
+  <h3>Change Password</h3>
+  <form method="post">
+    <div class="row">
+      <div class="field"><label>Current Password</label><input name="current_password" type="password" required></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>New Password</label><input name="new_password" type="password" minlength="6" required></div>
+      <div class="field"><label>Confirm New Password</label><input name="confirm_password" type="password" minlength="6" required></div>
+    </div>
+    <button class="btn brass" type="submit">Update Password</button>
+  </form>
+  <div class="hint">Minimum 6 characters.</div>
+</div>
+{% endblock %}

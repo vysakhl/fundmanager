@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><h2>Edit Debit</h2><div class="sub">Correct the amount or date for {{ debit.member.name }}'s debit</div></div>
+<div class="panel">
+  <form method="post">
+    <div class="row">
+      <div class="field"><label>Member</label><input value="{{ debit.member.name }}" disabled></div>
+      <div class="field"><label>Amount (₹)</label><input name="amount" type="number" min="1" step="1" value="{{ debit.amount }}" required></div>
+      <div class="field"><label>Date</label><input name="date" type="date" value="{{ debit.date }}" required></div>
+    </div>
+    <button class="btn brass" type="submit">Save Changes</button>
+    <a class="btn ghost" href="{{ url_for('debits') }}">Cancel</a>
+  </form>
+  <div class="hint">
+    Changing the amount adjusts the fund balance by the difference. Interest and outstanding
+    balance recalculate automatically from the (possibly new) date.
+    {% if debit.payments %}This debit already has {{ debit.payments|length }} payment(s) recorded against it —
+    double-check those still make sense after this edit.{% endif %}
+  </div>
+</div>
+{% endblock %}
