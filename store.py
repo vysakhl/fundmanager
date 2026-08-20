@@ -343,22 +343,24 @@ class Store:
         return wid
 
     # ---------------- Activity Log ----------------
-    def log_activity(self, description):
+    def log_activity(self, description, actor=None):
         aid = self._next_id('activity_log')
         self._data['activity_log'].append({
-            'id': aid, 'timestamp': datetime.utcnow().isoformat(), 'description': description,
+            'id': aid, 'timestamp': datetime.utcnow().isoformat(),
+            'description': description, 'actor': actor or 'system',
         })
 
     def list_activity(self, q=None, limit=500):
         rows = sorted(self._data['activity_log'], key=lambda a: a['timestamp'], reverse=True)
         if q:
             ql = q.lower()
-            rows = [a for a in rows if ql in a['description'].lower()]
+            rows = [a for a in rows if ql in a['description'].lower() or ql in a.get('actor', 'system').lower()]
         rows = rows[:limit]
         out = []
         for a in rows:
             d = dict(a)
             d['timestamp'] = datetime.fromisoformat(d['timestamp'])
+            d.setdefault('actor', 'system')  # entries logged before this field existed
             out.append(SimpleNamespace(**d))
         return out
 

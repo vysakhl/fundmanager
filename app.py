@@ -27,6 +27,12 @@ def current_user():
         return None
 
 
+def log(description):
+    """Log an activity entry, automatically attributing it to whoever is signed in."""
+    u = current_user()
+    store.log_activity(description, actor=u.username if u else 'system')
+
+
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -138,7 +144,7 @@ def account():
             flash('New password and confirmation do not match.')
             return redirect(url_for('account'))
         store.set_password(u.id, new_pw)
-        store.log_activity(f'{u.username} changed their own password.')
+        log(f'{u.username} changed their own password.')
         store.save()
         flash('Password updated.')
         return redirect(url_for('account'))
@@ -172,7 +178,7 @@ def add_user():
         flash(f'Username "{username}" is already in use.')
         return redirect(url_for('users_view'))
     store.add_user(username, password, role=role, member_id=int(member_id) if member_id else None)
-    store.log_activity(f'Created {role} login for "{username}".')
+    log(f'Created {role} login for "{username}".')
     store.save()
     return redirect(url_for('users_view'))
 
@@ -188,7 +194,7 @@ def delete_user(user_id):
         flash('You cannot remove your own account while logged in.')
         return redirect(url_for('users_view'))
     store.delete_user(user_id)
-    store.log_activity(f'Removed login "{target.username}".')
+    log(f'Removed login "{target.username}".')
     store.save()
     return redirect(url_for('users_view'))
 
@@ -202,7 +208,7 @@ def reset_user_password(user_id):
         flash('New password must be at least 6 characters.')
         return redirect(url_for('users_view'))
     store.set_password(user_id, new_password)
-    store.log_activity(f'Reset password for login "{target.username}".')
+    log(f'Reset password for login "{target.username}".')
     store.save()
     return redirect(url_for('users_view'))
 
@@ -275,7 +281,7 @@ def add_member():
     join_date = parse_date_input(request.form.get('join_date'))
     if name:
         store.add_member(name, join_date)
-        store.log_activity(f'Added member "{name}" (joined {join_date}).')
+        log(f'Added member "{name}" (joined {join_date}).')
         store.save()
     return redirect(url_for('members'))
 
@@ -288,7 +294,7 @@ def rename_member(member_id):
     if name:
         old_name = m.name
         store.rename_member(member_id, name)
-        store.log_activity(f'Renamed member "{old_name}" to "{name}".')
+        log(f'Renamed member "{old_name}" to "{name}".')
         store.save()
     return redirect(url_for('members'))
 
@@ -298,7 +304,7 @@ def rename_member(member_id):
 def delete_member(member_id):
     m = store.get_member(member_id)
     store.delete_member(member_id)
-    store.log_activity(f'Removed member "{m.name}".')
+    log(f'Removed member "{m.name}".')
     store.save()
     return redirect(url_for('members'))
 
@@ -310,7 +316,7 @@ def set_member_limit(member_id):
     raw = (request.form.get('debit_limit') or '').strip()
     if raw == '':
         store.set_member_debit_limit(member_id, None)
-        store.log_activity(f'Cleared custom debit limit for {m.name} (now uses the group default).')
+        log(f'Cleared custom debit limit for {m.name} (now uses the group default).')
     else:
         try:
             limit = float(raw)
@@ -321,7 +327,7 @@ def set_member_limit(member_id):
             flash('Debit limit cannot be negative.')
             return redirect(url_for('members'))
         store.set_member_debit_limit(member_id, limit)
-        store.log_activity(f'Set a custom debit limit of ₹{limit:,.2f} for {m.name}.')
+        log(f'Set a custom debit limit of ₹{limit:,.2f} for {m.name}.')
     store.save()
     return redirect(url_for('members'))
 
@@ -360,9 +366,9 @@ def toggle_contribution():
     store.set_contribution_paid(member_id, month, not was_paid)
     store.adjust_fund_balance(-s.contribution if was_paid else s.contribution)
     if was_paid:
-        store.log_activity(f'Marked {m.name} unpaid for {month} contribution (₹{s.contribution:,.2f} reversed).')
+        log(f'Marked {m.name} unpaid for {month} contribution (₹{s.contribution:,.2f} reversed).')
     else:
-        store.log_activity(f'Collected ₹{s.contribution:,.2f} contribution from {m.name} for {month}.')
+        log(f'Collected ₹{s.contribution:,.2f} contribution from {m.name} for {month}.')
     store.save()
     return redirect(url_for('contributions', month=month))
 
@@ -424,7 +430,7 @@ def add_debit():
 
     store.add_debit(member_id, amount, d, closed=False)
     store.adjust_fund_balance(-amount)
-    store.log_activity(f'Issued debit of ₹{amount:,.2f} to {member.name} on {d}.')
+    log(f'Issued debit of ₹{amount:,.2f} to {member.name} on {d}.')
     store.save()
     return redirect(url_for('debits'))
 
@@ -449,7 +455,7 @@ def edit_debit(debit_id):
         if old_amount != amount:
             # Fund balance was reduced by the original amount when issued — true up the difference.
             store.adjust_fund_balance(old_amount - amount)
-        store.log_activity(
+        log(
             f'Corrected debit for {d.member.name}: amount ₹{old_amount:,.2f} → ₹{amount:,.2f}, '
             f'date {old_date} → {new_date}.'
         )
@@ -484,7 +490,7 @@ def partial_pay(debit_id):
         if payment_amount > outstanding_total + 0.01:
             flash(f'Payment exceeded the outstanding balance of ₹{outstanding_total:,.2f} — '
                   f'only that amount was applied and the debit was closed as fully repaid.')
-        store.log_activity(f'{d.member.name} paid ₹{applied:,.2f}, fully clearing debit dated {d.date}.')
+        log(f'{d.member.name} paid ₹{applied:,.2f}, fully clearing debit dated {d.date}.')
         store.save()
         return redirect(url_for('debits'))
 
@@ -500,7 +506,7 @@ def partial_pay(debit_id):
     store.close_debit(d.id, 'partial_split')
     store.add_debit(d.member_id, remaining_principal, today, closed=False)
 
-    store.log_activity(
+    log(
         f'{d.member.name} partially paid ₹{payment_amount:,.2f} (₹{interest_due:,.2f} interest + '
         f'₹{principal_portion:,.2f} principal) on debit dated {d.date}. '
         f'Remaining ₹{remaining_principal:,.2f} rolled into a new debit dated {today}.'
@@ -519,7 +525,7 @@ def mark_fully_repaid(debit_id):
         store.add_debit_payment(d.id, date.today(), outstanding)
         store.adjust_fund_balance(outstanding)
     store.close_debit(d.id, 'fully_repaid')
-    store.log_activity(f'Marked debit for {d.member.name} (dated {d.date}) fully repaid — ₹{outstanding:,.2f} added to fund.')
+    log(f'Marked debit for {d.member.name} (dated {d.date}) fully repaid — ₹{outstanding:,.2f} added to fund.')
     store.save()
     return redirect(url_for('debits'))
 
@@ -567,7 +573,7 @@ def add_winner():
     cash_given = max(0.0, amount - debit_closed)
     store.add_winner(member_id, month, amount, debit_closed, cash_given, d)
     store.adjust_fund_balance(-amount)
-    store.log_activity(f'{member.name} won the {month} lottery — ₹{amount:,.2f} prize '
+    log(f'{member.name} won the {month} lottery — ₹{amount:,.2f} prize '
                         f'(₹{debit_closed:,.2f} closed debits, ₹{cash_given:,.2f} cash given).')
     store.save()
     return redirect(url_for('winners'))
@@ -585,7 +591,7 @@ def settings_view():
             debit_limit=float(request.form.get('debit_limit') or s.debit_limit),
             interest_rate=float(request.form.get('interest_rate') or s.interest_rate),
         )
-        store.log_activity('Updated fund settings (contribution, lottery, debit limit, or interest rate).')
+        log('Updated fund settings (contribution, lottery, debit limit, or interest rate).')
         store.save()
         return redirect(url_for('settings_view'))
     return render_template('settings.html', settings=s, active='settings')
@@ -596,7 +602,7 @@ def settings_view():
 def update_fund_balance():
     s = store.get_settings()
     new_balance = float(request.form.get('fund_balance') or 0)
-    store.log_activity(f'Manually adjusted fund balance from ₹{s.fund_balance:,.2f} to ₹{new_balance:,.2f}.')
+    log(f'Manually adjusted fund balance from ₹{s.fund_balance:,.2f} to ₹{new_balance:,.2f}.')
     store.set_fund_balance(new_balance)
     store.save()
     return redirect(url_for('settings_view'))
@@ -610,7 +616,7 @@ def rules_view():
         if not (current_user() and current_user().role == 'admin'):
             abort(403)
         store.update_settings(rules_text=request.form.get('rules_text', s.rules_text))
-        store.log_activity('Edited the group rules.')
+        log('Edited the group rules.')
         store.save()
         return redirect(url_for('rules_view'))
     return render_template('rules.html', settings=s, active='rules')

@@ -11,15 +11,16 @@
     {% if q %}<a class="btn ghost" href="{{ url_for('activity') }}">Clear</a>{% endif %}
   </form>
   <div class="table-wrap"><table>
-    <thead><tr><th style="width:190px;">When</th><th>Activity</th></tr></thead>
+    <thead><tr><th style="width:190px;">When</th><th style="width:120px;">By</th><th>Activity</th></tr></thead>
     <tbody>
-    {% for log in logs %}
+    {% for entry in logs %}
       <tr>
-        <td class="num">{{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-        <td>{{ log.description }}</td>
+        <td class="num">{{ entry.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>{{ entry.actor }}</td>
+        <td>{{ entry.description }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="2" class="empty">{% if q %}No activity matches "{{ q }}"{% else %}No activity recorded yet{% endif %}</td></tr>
+      <tr><td colspan="3" class="empty">{% if q %}No activity matches "{{ q }}"{% else %}No activity recorded yet{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table></div>
