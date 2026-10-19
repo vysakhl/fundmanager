@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><h2>Close Debit</h2><div class="sub">Full payment for {{ debit.member.name }} — adjust the interest, record what was received, and write off any shortfall</div></div>
+<div class="panel">
+  <form method="post" id="closeForm">
+    <div class="row">
+      <div class="field"><label>Principal (₹)</label><input value="{{ '{:,.2f}'.format(debit.amount) }}" disabled></div>
+      <div class="field"><label>Already Paid (₹)</label><input value="{{ '{:,.2f}'.format(already_paid) }}" disabled></div>
+      <div class="field"><label>Automatic Interest (₹)</label><input value="{{ '{:,.2f}'.format(accrued) }}" disabled></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Interest to Collect (₹)</label>
+        <input name="interest" id="interest" type="number" min="0" step="0.01" value="{{ '%.2f'|format(accrued) }}" required></div>
+      <div class="field"><label>Amount Received (₹)</label>
+        <input name="received" id="received" type="number" min="0" step="0.01" required></div>
+      <div class="field"><label>Written Off (₹)</label>
+        <input id="writeoff" value="0.00" disabled></div>
+    </div>
+    <div class="field" id="noteField" style="display:none;max-width:640px;">
+      <label>Write-off note (required)</label>
+      <textarea name="note" id="note" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:6px;font-family:inherit;" placeholder="Why is the remaining amount being written off?"></textarea>
+    </div>
+    <button class="btn brass" type="submit">Close Debit</button>
+    <a class="btn ghost" href="{{ url_for('debits') }}">Cancel</a>
+  </form>
+  <div class="hint">
+    Balance due = principal + interest − already paid. Only the <strong>amount received</strong> is added to the fund balance;
+    any written-off amount is recorded on the debit and in the activity log but never added to the fund.
+  </div>
+</div>
+<script>
+(function(){
+  var principal = {{ debit.amount }}, paid = {{ already_paid }};
+  var interest = document.getElementById('interest');
+  var received = document.getElementById('received');
+  var writeoff = document.getElementById('writeoff');
+  var noteField = document.getElementById('noteField');
+  var note = document.getElementById('note');
+  var touched = false;
+  function due(){ return Math.max(0, principal + (parseFloat(interest.value)||0) - paid); }
+  function refresh(){
+    var w = Math.max(0, due() - (parseFloat(received.value)||0));
+    writeoff.value = w.toFixed(2);
+    noteField.style.display = w > 0.004 ? 'block' : 'none';
+    note.required = w > 0.004;
+  }
+  interest.addEventListener('input', function(){
+    if(!touched){ received.value = due().toFixed(2); }
+    refresh();
+  });
+  received.addEventListener('input', function(){ touched = true; refresh(); });
+  received.value = due().toFixed(2);
+  refresh();
+})();
+</script>
+{% endblock %}

@@ -1,669 +1,678 @@
 import os
 from functools import wraps
-from datetime import datetime, date
-from calendar import month_name
+from datetime import date, datetime
 
-from flask import (
-    Flask, render_template, request, redirect, url_for, session, flash, g
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort
+
+from store import Store
+from logic import (
+    months_elapsed, interest_accrued, effective_interest, debit_outstanding, debit_interest_outstanding, is_overdue,
+    member_open_debits, member_open_principal, member_total_outstanding, paid_total,
 )
 
-import db as dbm
-
 app = Flask(__name__)
-app.secret_key = os.environ.get("CHITFUND_SECRET_KEY", "change-this-secret-key")
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
 
-ADMIN_PASSWORD = os.environ.get("CHITFUND_ADMIN_PASSWORD", "admin123")
-
-
-dbm.init_db()
-
-# ---------------------------------------------------------------- helpers --
-
-def get_db():
-    if "db" not in g:
-        g.db = dbm.get_db()
-    return g.db
+store = Store()
 
 
-@app.teardown_appcontext
-def close_db(exception=None):
-    conn = g.pop("db", None)
-    if conn is not None:
-        conn.close()
+# ---------------- Auth helpers ----------------
+def current_user():
+    uid = session.get('user_id')
+    if uid is None:
+        return None
+    try:
+        return store.get_user(uid)
+    except Exception:
+        return None
+
+
+def log(description):
+    """Log an activity entry, automatically attributing it to whoever is signed in."""
+    u = current_user()
+    store.log_activity(description, actor=u.username if u else 'system')
 
 
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not session.get("logged_in"):
-            return redirect(url_for("login", next=request.path))
+        if current_user() is None:
+            return redirect(url_for('login', next=request.path))
         return view(*args, **kwargs)
     return wrapped
 
 
-def money(v):
-    try:
-        return "₹{:,.2f}".format(float(v))
-    except (TypeError, ValueError):
-        return v
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        u = current_user()
+        if u is None:
+            return redirect(url_for('login', next=request.path))
+        if u.role != 'admin':
+            abort(403)
+        return view(*args, **kwargs)
+    return wrapped
 
 
-app.jinja_env.filters["money"] = money
+@app.context_processor
+def inject_auth():
+    u = current_user()
+    return dict(current_user=u, is_admin=bool(u and u.role == 'admin'))
 
 
-def loan_interest_tiers(principal, rate):
-    i1 = round(principal * rate, 2)
-    i2 = round(i1 * 2, 2)
-    i3 = round(i2 * 2, 2)
-    return [i1, i2, i3]
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template('error.html', code=403,
+                            message="You have view-only access — this action is restricted to admins."), 403
 
 
-def next_month_label(label, offset):
-    y, m = [int(x) for x in label.split("-")]
-    total = (y * 12 + (m - 1)) + offset
-    ny, nm = divmod(total, 12)
-    return "{:04d}-{:02d}".format(ny, nm + 1)
+# ---------------- Helpers ----------------
+def month_key(d=None):
+    d = d or date.today()
+    return d.strftime('%Y-%m')
 
 
-# ------------------------------------------------------------------ auth --
+def shift_month(month_str, delta):
+    y, m = map(int, month_str.split('-'))
+    m += delta
+    while m < 1:
+        m += 12
+        y -= 1
+    while m > 12:
+        m -= 12
+        y += 1
+    return f'{y:04d}-{m:02d}'
 
-@app.route("/login", methods=["GET", "POST"])
+
+def month_label(month_str):
+    y, m = map(int, month_str.split('-'))
+    return date(y, m, 1).strftime('%B %Y')
+
+
+def parse_date_input(s, fallback=None):
+    if not s:
+        return fallback or date.today()
+    return datetime.strptime(s, '%Y-%m-%d').date()
+
+
+def effective_debit_limit(member, settings):
+    """A member's own debit_limit overrides the group default when set."""
+    return member.debit_limit if member.debit_limit is not None else settings.debit_limit
+
+
+# ---------------- Auth routes ----------------
+@app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method == "POST":
-        pwd = request.form.get("password", "")
-        if pwd == ADMIN_PASSWORD:
-            session["logged_in"] = True
-            nxt = request.args.get("next") or url_for("dashboard")
-            return redirect(nxt)
-        flash("Incorrect password.", "danger")
-    return render_template("login.html")
+    if current_user() is not None:
+        return redirect(url_for('dashboard'))
+    if request.method == 'POST':
+        username = request.form.get('username', '')
+        password = request.form.get('password', '')
+        user = store.verify_login(username, password)
+        if user is None:
+            flash('Incorrect username or password.')
+            return redirect(url_for('login'))
+        session.clear()
+        session['user_id'] = user.id
+        session.permanent = True
+        next_url = request.args.get('next') or url_for('dashboard')
+        return redirect(next_url)
+    return render_template('login.html')
 
 
-@app.route("/logout")
+@app.route('/logout', methods=['POST'])
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    return redirect(url_for('login'))
 
 
-# ------------------------------------------------------------- dashboard --
+@app.route('/account', methods=['GET', 'POST'])
+@login_required
+def account():
+    u = current_user()
+    if request.method == 'POST':
+        current_pw = request.form.get('current_password', '')
+        new_pw = request.form.get('new_password', '')
+        confirm_pw = request.form.get('confirm_password', '')
+        if store.verify_login(u.username, current_pw) is None:
+            flash('Current password is incorrect.')
+            return redirect(url_for('account'))
+        if len(new_pw) < 6:
+            flash('New password must be at least 6 characters.')
+            return redirect(url_for('account'))
+        if new_pw != confirm_pw:
+            flash('New password and confirmation do not match.')
+            return redirect(url_for('account'))
+        store.set_password(u.id, new_pw)
+        log(f'{u.username} changed their own password.')
+        store.save()
+        flash('Password updated.')
+        return redirect(url_for('account'))
+    return render_template('account.html', settings=store.get_settings(), active='account')
 
-@app.route("/")
+
+@app.route('/users')
+@admin_required
+def users_view():
+    all_users = store.list_users()
+    all_members = store.list_members()
+    return render_template(
+        'users.html', users=all_users, members=all_members,
+        settings=store.get_settings(), active='users',
+    )
+
+
+@app.route('/users/add', methods=['POST'])
+@admin_required
+def add_user():
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '')
+    role = request.form.get('role', 'viewer')
+    member_id = request.form.get('member_id') or None
+    if role not in ('admin', 'viewer'):
+        role = 'viewer'
+    if not username or len(password) < 6:
+        flash('Username is required and password must be at least 6 characters.')
+        return redirect(url_for('users_view'))
+    if store.username_taken(username):
+        flash(f'Username "{username}" is already in use.')
+        return redirect(url_for('users_view'))
+    store.add_user(username, password, role=role, member_id=int(member_id) if member_id else None)
+    log(f'Created {role} login for "{username}".')
+    store.save()
+    return redirect(url_for('users_view'))
+
+
+@app.route('/users/<int:user_id>/delete', methods=['POST'])
+@admin_required
+def delete_user(user_id):
+    target = store.get_user(user_id)
+    if target.role == 'admin' and store.count_admins() <= 1:
+        flash('Cannot remove the last remaining admin account.')
+        return redirect(url_for('users_view'))
+    if target.id == current_user().id:
+        flash('You cannot remove your own account while logged in.')
+        return redirect(url_for('users_view'))
+    store.delete_user(user_id)
+    log(f'Removed login "{target.username}".')
+    store.save()
+    return redirect(url_for('users_view'))
+
+
+@app.route('/users/<int:user_id>/reset-password', methods=['POST'])
+@admin_required
+def reset_user_password(user_id):
+    target = store.get_user(user_id)
+    new_password = request.form.get('password', '')
+    if len(new_password) < 6:
+        flash('New password must be at least 6 characters.')
+        return redirect(url_for('users_view'))
+    store.set_password(user_id, new_password)
+    log(f'Reset password for login "{target.username}".')
+    store.save()
+    return redirect(url_for('users_view'))
+
+
+# ---------------- App routes ----------------
+@app.route('/')
+@login_required
+def index():
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/dashboard')
 @login_required
 def dashboard():
-    conn = get_db()
-    members = conn.execute(
-        "SELECT * FROM members WHERE active=1 ORDER BY name"
-    ).fetchall()
-    total_members = conn.execute("SELECT COUNT(*) c FROM members WHERE active=1").fetchone()["c"]
+    s = store.get_settings()
+    members = store.list_members()
+    this_month = month_key()
+    rate = s.interest_rate
 
-    current_month = conn.execute(
-        "SELECT * FROM months ORDER BY draw_date DESC LIMIT 1"
-    ).fetchone()
+    member_rows = []
+    overdue_count = 0
+    for m in members:
+        contrib = store.get_contribution(m.id, this_month)
+        paid = bool(contrib and contrib.paid)
+        debits = store.list_debits(member_id=m.id)
+        outstanding = member_total_outstanding(debits, rate)
+        overdue = any(is_overdue(d, rate) for d in member_open_debits(debits))
+        if overdue:
+            overdue_count += 1
+        member_rows.append(dict(member=m, paid=paid, outstanding=outstanding, overdue=overdue))
 
-    paid_count = 0
-    if current_month:
-        paid_count = conn.execute(
-            "SELECT COUNT(*) c FROM contributions WHERE month_id=? AND paid=1",
-            (current_month["id"],),
-        ).fetchone()["c"]
-
-    balance = dbm.savings_balance(conn)
-
-    active_loans = conn.execute(
-        "SELECT l.*, m.name as member_name FROM loans l JOIN members m ON m.id=l.member_id "
-        "WHERE l.status='active' ORDER BY l.taken_date DESC"
-    ).fetchall()
-    outstanding_principal = sum(l["principal"] for l in active_loans)
-
-    recent_activity = conn.execute(
-        "SELECT * FROM activity_log ORDER BY id DESC LIMIT 12"
-    ).fetchall()
-
-    winners = conn.execute(
-        "SELECT mo.label, m.name FROM months mo JOIN members m ON m.id = mo.winner_member_id "
-        "WHERE mo.winner_member_id IS NOT NULL ORDER BY mo.draw_date DESC LIMIT 6"
-    ).fetchall()
+    paid_contribs = store.count_paid_contributions()
+    total_contrib_amount = paid_contribs * s.contribution
+    open_debits = store.list_debits(closed=False)
+    total_outstanding = sum(debit_outstanding(d, rate) for d in open_debits)
+    total_interest_outstanding = sum(debit_interest_outstanding(d, rate) for d in open_debits)
+    paid_this_month = store.count_paid_contributions(month=this_month)
+    recent_winners = store.list_winners(limit=5)
 
     return render_template(
-        "dashboard.html",
-        members=members,
-        total_members=total_members,
-        current_month=current_month,
-        paid_count=paid_count,
-        balance=balance,
-        active_loans=active_loans,
-        outstanding_principal=outstanding_principal,
-        recent_activity=recent_activity,
-        winners=winners,
+        'dashboard.html', settings=s, member_rows=member_rows,
+        total_contrib_amount=total_contrib_amount, total_outstanding=total_outstanding,
+        total_interest_outstanding=total_interest_outstanding,
+        overdue_count=overdue_count, this_month=this_month,
+        paid_this_month=paid_this_month, total_members=len(members),
+        recent_winners=recent_winners, active='dashboard',
     )
 
 
-# ----------------------------------------------------------------members --
-
-@app.route("/members")
+@app.route('/members')
 @login_required
 def members():
-    conn = get_db()
-    all_members = conn.execute("SELECT * FROM members ORDER BY active DESC, name").fetchall()
-    return render_template("members.html", members=all_members)
+    s = store.get_settings()
+    all_members = store.list_members()
+    rows = [
+        dict(
+            member=m,
+            outstanding=member_total_outstanding(store.list_debits(member_id=m.id), s.interest_rate),
+            limit=effective_debit_limit(m, s),
+        )
+        for m in all_members
+    ]
+    return render_template('members.html', rows=rows, settings=s, today=date.today().isoformat(), active='members')
 
 
-@app.route("/members/add", methods=["POST"])
-@login_required
+@app.route('/members/add', methods=['POST'])
+@admin_required
 def add_member():
-    conn = get_db()
-    name = request.form.get("name", "").strip()
-    phone = request.form.get("phone", "").strip()
-    join_date = request.form.get("join_date") or date.today().isoformat()
-    if not name:
-        flash("Name is required.", "danger")
-        return redirect(url_for("members"))
-    conn.execute(
-        "INSERT INTO members (name, phone, join_date, active) VALUES (?, ?, ?, 1)",
-        (name, phone, join_date),
-    )
-    dbm.log_activity(conn, "member_added", f"Added member {name}")
-    conn.commit()
-    flash(f"{name} added to the chit fund.", "success")
-    return redirect(url_for("members"))
+    name = request.form.get('name', '').strip()
+    join_date = parse_date_input(request.form.get('join_date'))
+    if name:
+        store.add_member(name, join_date)
+        log(f'Added member "{name}" (joined {join_date}).')
+        store.save()
+    return redirect(url_for('members'))
 
 
-@app.route("/members/<int:member_id>/toggle", methods=["POST"])
-@login_required
-def toggle_member(member_id):
-    conn = get_db()
-    m = conn.execute("SELECT * FROM members WHERE id=?", (member_id,)).fetchone()
-    if not m:
-        flash("Member not found.", "danger")
-        return redirect(url_for("members"))
-    new_active = 0 if m["active"] else 1
-    left_date = date.today().isoformat() if new_active == 0 else None
-    conn.execute(
-        "UPDATE members SET active=?, left_date=? WHERE id=?",
-        (new_active, left_date, member_id),
-    )
-    dbm.log_activity(
-        conn,
-        "member_deactivated" if new_active == 0 else "member_reactivated",
-        f"{m['name']}",
-    )
-    conn.commit()
-    return redirect(url_for("members"))
+@app.route('/members/<int:member_id>/rename', methods=['POST'])
+@admin_required
+def rename_member(member_id):
+    m = store.get_member(member_id)
+    name = request.form.get('name', '').strip()
+    if name:
+        old_name = m.name
+        store.rename_member(member_id, name)
+        log(f'Renamed member "{old_name}" to "{name}".')
+        store.save()
+    return redirect(url_for('members'))
 
 
-# ----------------------------------------------------------------- months --
-
-@app.route("/months")
-@login_required
-def months():
-    conn = get_db()
-    all_months = conn.execute(
-        "SELECT mo.*, m.name as winner_name FROM months mo "
-        "LEFT JOIN members m ON m.id = mo.winner_member_id "
-        "ORDER BY mo.draw_date DESC"
-    ).fetchall()
-    return render_template("months.html", months=all_months)
+@app.route('/members/<int:member_id>/delete', methods=['POST'])
+@admin_required
+def delete_member(member_id):
+    m = store.get_member(member_id)
+    store.delete_member(member_id)
+    log(f'Removed member "{m.name}".')
+    store.save()
+    return redirect(url_for('members'))
 
 
-@app.route("/months/new", methods=["GET", "POST"])
-@login_required
-def new_month():
-    conn = get_db()
-    if request.method == "POST":
-        label = request.form.get("label", "").strip()  # YYYY-MM
-        draw_date = request.form.get("draw_date", "").strip()
-        if not label or not draw_date:
-            flash("Month label and draw date are required.", "danger")
-            return redirect(url_for("new_month"))
-
-        existing = conn.execute("SELECT id FROM months WHERE label=?", (label,)).fetchone()
-        if existing:
-            flash("That month already exists.", "warning")
-            return redirect(url_for("months"))
-
-        chit_amount = float(dbm.get_setting(conn, "chit_total_amount", 17500))
-        cur = conn.execute(
-            "INSERT INTO months (label, draw_date, status, chit_amount, created_at) "
-            "VALUES (?, ?, 'open', ?, ?)",
-            (label, draw_date, chit_amount, datetime.now().isoformat(timespec="seconds")),
-        )
-        month_id = cur.lastrowid
-
-        chit_portion = float(dbm.get_setting(conn, "chit_portion", 1250))
-        savings_portion = float(dbm.get_setting(conn, "savings_portion", 100))
-        amount_expected = float(dbm.get_setting(conn, "monthly_contribution", 1350))
-
-        active_members = conn.execute("SELECT id FROM members WHERE active=1").fetchall()
-        for mem in active_members:
-            conn.execute(
-                "INSERT INTO contributions (month_id, member_id, amount_expected, "
-                "chit_portion, savings_portion, paid) VALUES (?, ?, ?, ?, ?, 0)",
-                (month_id, mem["id"], amount_expected, chit_portion, savings_portion),
-            )
-
-        dbm.log_activity(conn, "month_opened", f"Kuri month {label} opened, draw date {draw_date}")
-        conn.commit()
-        flash(f"Month {label} created with {len(active_members)} members.", "success")
-        return redirect(url_for("month_detail", month_id=month_id))
-
-    suggested_label = ""
-    last = conn.execute("SELECT label FROM months ORDER BY draw_date DESC LIMIT 1").fetchone()
-    if last:
-        suggested_label = next_month_label(last["label"], 1)
-    return render_template("month_form.html", suggested_label=suggested_label)
-
-
-@app.route("/months/<int:month_id>")
-@login_required
-def month_detail(month_id):
-    conn = get_db()
-    mo = conn.execute("SELECT * FROM months WHERE id=?", (month_id,)).fetchone()
-    if not mo:
-        flash("Month not found.", "danger")
-        return redirect(url_for("months"))
-    contribs = conn.execute(
-        "SELECT c.*, m.name as member_name FROM contributions c "
-        "JOIN members m ON m.id = c.member_id WHERE c.month_id=? ORDER BY m.name",
-        (month_id,),
-    ).fetchall()
-    eligible_members = conn.execute(
-        "SELECT * FROM members WHERE active=1 ORDER BY name"
-    ).fetchall()
-    winner = None
-    if mo["winner_member_id"]:
-        winner = conn.execute("SELECT * FROM members WHERE id=?", (mo["winner_member_id"],)).fetchone()
-
-    paid_total = sum(c["amount_expected"] for c in contribs if c["paid"])
-    savings_total = sum(c["savings_portion"] for c in contribs if c["paid"])
-
-    return render_template(
-        "month_detail.html",
-        mo=mo,
-        contribs=contribs,
-        eligible_members=eligible_members,
-        winner=winner,
-        paid_total=paid_total,
-        savings_total=savings_total,
-    )
-
-
-@app.route("/months/<int:month_id>/contribution/<int:contrib_id>/toggle", methods=["POST"])
-@login_required
-def toggle_contribution(month_id, contrib_id):
-    conn = get_db()
-    c = conn.execute("SELECT * FROM contributions WHERE id=?", (contrib_id,)).fetchone()
-    if not c:
-        flash("Contribution not found.", "danger")
-        return redirect(url_for("month_detail", month_id=month_id))
-
-    mo = conn.execute("SELECT * FROM months WHERE id=?", (month_id,)).fetchone()
-    member = conn.execute("SELECT * FROM members WHERE id=?", (c["member_id"],)).fetchone()
-
-    if c["paid"]:
-        # un-mark as paid, reverse the savings ledger entry
-        conn.execute("UPDATE contributions SET paid=0, paid_date=NULL, payment_mode=NULL WHERE id=?", (contrib_id,))
-        conn.execute(
-            "DELETE FROM savings_ledger WHERE type='monthly_savings' AND month_id=? AND related_member_id=?",
-            (month_id, c["member_id"]),
-        )
-        dbm.log_activity(conn, "contribution_unpaid", f"{member['name']} - {mo['label']} marked unpaid")
+@app.route('/members/<int:member_id>/set-limit', methods=['POST'])
+@admin_required
+def set_member_limit(member_id):
+    m = store.get_member(member_id)
+    raw = (request.form.get('debit_limit') or '').strip()
+    if raw == '':
+        store.set_member_debit_limit(member_id, None)
+        log(f'Cleared custom debit limit for {m.name} (now uses the group default).')
     else:
-        payment_mode = request.form.get("payment_mode", "online")
-        conn.execute(
-            "UPDATE contributions SET paid=1, paid_date=?, payment_mode=? WHERE id=?",
-            (date.today().isoformat(), payment_mode, contrib_id),
-        )
-        conn.execute(
-            "INSERT INTO savings_ledger (date, type, description, amount, month_id, related_member_id) "
-            "VALUES (?, 'monthly_savings', ?, ?, ?, ?)",
-            (
-                date.today().isoformat(),
-                f"Savings portion - {member['name']} - {mo['label']}",
-                c["savings_portion"],
-                month_id,
-                c["member_id"],
-            ),
-        )
-        dbm.log_activity(
-            conn, "contribution_paid",
-            f"{member['name']} paid ₹{c['amount_expected']} for {mo['label']} ({payment_mode})",
-        )
-    conn.commit()
-    return redirect(url_for("month_detail", month_id=month_id))
+        try:
+            limit = float(raw)
+        except ValueError:
+            flash('Enter a valid number for the debit limit.')
+            return redirect(url_for('members'))
+        if limit < 0:
+            flash('Debit limit cannot be negative.')
+            return redirect(url_for('members'))
+        store.set_member_debit_limit(member_id, limit)
+        log(f'Set a custom debit limit of ₹{limit:,.2f} for {m.name}.')
+    store.save()
+    return redirect(url_for('members'))
 
 
-@app.route("/months/<int:month_id>/draw", methods=["POST"])
+@app.route('/contributions')
 @login_required
-def record_draw(month_id):
-    conn = get_db()
-    winner_id = request.form.get("winner_member_id")
-    if not winner_id:
-        flash("Select a winner.", "danger")
-        return redirect(url_for("month_detail", month_id=month_id))
-    mo = conn.execute("SELECT * FROM months WHERE id=?", (month_id,)).fetchone()
-    winner = conn.execute("SELECT * FROM members WHERE id=?", (winner_id,)).fetchone()
-    conn.execute(
-        "UPDATE months SET winner_member_id=?, status='drawn' WHERE id=?",
-        (winner_id, month_id),
-    )
-    dbm.log_activity(conn, "draw_completed", f"{winner['name']} won the {mo['label']} kuri draw (₹{mo['chit_amount']})")
-    conn.commit()
-    flash(f"{winner['name']} recorded as the winner for {mo['label']}.", "success")
-    return redirect(url_for("month_detail", month_id=month_id))
+def contributions():
+    s = store.get_settings()
+    month = request.args.get('month') or month_key()
+    all_members = store.list_members()
+    rows = []
+    collected = 0.0
+    for m in all_members:
+        c = store.get_contribution(m.id, month)
+        paid = bool(c and c.paid)
+        if paid:
+            collected += s.contribution
+        rows.append(dict(member=m, paid=paid))
 
-
-@app.route("/months/<int:month_id>/payout", methods=["POST"])
-@login_required
-def record_payout(month_id):
-    conn = get_db()
-    mo = conn.execute("SELECT * FROM months WHERE id=?", (month_id,)).fetchone()
-    winner = conn.execute("SELECT * FROM members WHERE id=?", (mo["winner_member_id"],)).fetchone()
-    conn.execute(
-        "UPDATE months SET payout_done=1, payout_date=?, status='closed' WHERE id=?",
-        (date.today().isoformat(), month_id),
-    )
-    dbm.log_activity(conn, "payout_transferred", f"₹{mo['chit_amount']} transferred to {winner['name']} for {mo['label']}")
-    conn.commit()
-    flash("Payout recorded.", "success")
-    return redirect(url_for("month_detail", month_id=month_id))
-
-
-# ------------------------------------------------------------------ loans --
-
-@app.route("/loans")
-@login_required
-def loans():
-    conn = get_db()
-    all_loans = conn.execute(
-        "SELECT l.*, m.name as member_name FROM loans l "
-        "JOIN members m ON m.id = l.member_id ORDER BY l.status='active' DESC, l.taken_date DESC"
-    ).fetchall()
-    return render_template("loans.html", loans=all_loans)
-
-
-@app.route("/loans/new", methods=["GET", "POST"])
-@login_required
-def new_loan():
-    conn = get_db()
-    max_loan = float(dbm.get_setting(conn, "max_loan_amount", 7500))
-    rate = float(dbm.get_setting(conn, "loan_base_interest_rate", 0.01))
-
-    if request.method == "POST":
-        member_id = request.form.get("member_id")
-        principal = float(request.form.get("principal", 0))
-        purpose = request.form.get("purpose", "").strip()
-        month_id = request.form.get("month_id")
-
-        member = conn.execute("SELECT * FROM members WHERE id=?", (member_id,)).fetchone()
-        mo = conn.execute("SELECT * FROM months WHERE id=?", (month_id,)).fetchone()
-
-        if principal <= 0 or principal > max_loan:
-            flash(f"Loan amount must be between ₹1 and ₹{max_loan:,.0f}.", "danger")
-            return redirect(url_for("new_loan"))
-
-        existing_active = conn.execute(
-            "SELECT id FROM loans WHERE member_id=? AND status='active'", (member_id,)
-        ).fetchone()
-        if existing_active:
-            flash(f"{member['name']} already has an active loan. Close it before issuing a new one.", "warning")
-            return redirect(url_for("new_loan"))
-
-        balance = dbm.savings_balance(conn)
-        if principal > balance:
-            flash(f"Fund balance (₹{balance:,.2f}) is lower than the requested loan amount.", "warning")
-            return redirect(url_for("new_loan"))
-
-        cur = conn.execute(
-            "INSERT INTO loans (member_id, month_id, principal, purpose, taken_date, status) "
-            "VALUES (?, ?, ?, ?, ?, 'active')",
-            (member_id, month_id, principal, purpose, date.today().isoformat()),
-        )
-        loan_id = cur.lastrowid
-
-        tiers = loan_interest_tiers(principal, rate)
-        for i, interest in enumerate(tiers, start=1):
-            due_label = next_month_label(mo["label"], i)
-            conn.execute(
-                "INSERT INTO loan_installments (loan_id, installment_no, interest_amount, due_label) "
-                "VALUES (?, ?, ?, ?)",
-                (loan_id, i, interest, due_label),
-            )
-
-        conn.execute(
-            "INSERT INTO savings_ledger (date, type, description, amount, month_id, related_member_id, related_loan_id) "
-            "VALUES (?, 'loan_disbursed', ?, ?, ?, ?, ?)",
-            (
-                date.today().isoformat(),
-                f"Loan disbursed to {member['name']}",
-                -principal,
-                month_id,
-                member_id,
-                loan_id,
-            ),
-        )
-        dbm.log_activity(conn, "loan_issued", f"₹{principal:,.0f} loan issued to {member['name']}")
-        conn.commit()
-        flash(f"Loan of ₹{principal:,.0f} issued to {member['name']}.", "success")
-        return redirect(url_for("loan_detail", loan_id=loan_id))
-
-    eligible_members = conn.execute("SELECT * FROM members WHERE active=1 ORDER BY name").fetchall()
-    all_months = conn.execute("SELECT * FROM months ORDER BY draw_date DESC").fetchall()
-    balance = dbm.savings_balance(conn)
     return render_template(
-        "loan_form.html",
-        members=eligible_members,
-        months=all_months,
-        max_loan=max_loan,
-        balance=balance,
+        'contributions.html', rows=rows, month=month,
+        prev_month=shift_month(month, -1), next_month=shift_month(month, 1),
+        month_label=month_label(month), collected=collected, settings=s, active='contributions',
     )
 
 
-@app.route("/loans/<int:loan_id>")
+@app.route('/contributions/toggle', methods=['POST'])
+@admin_required
+def toggle_contribution():
+    member_id = int(request.form['member_id'])
+    month = request.form['month']
+    s = store.get_settings()
+    m = store.get_member(member_id)
+    c = store.get_contribution(member_id, month)
+    was_paid = bool(c and c.paid)
+    store.set_contribution_paid(member_id, month, not was_paid)
+    store.adjust_fund_balance(-s.contribution if was_paid else s.contribution)
+    if was_paid:
+        log(f'Marked {m.name} unpaid for {month} contribution (₹{s.contribution:,.2f} reversed).')
+    else:
+        log(f'Collected ₹{s.contribution:,.2f} contribution from {m.name} for {month}.')
+    store.save()
+    return redirect(url_for('contributions', month=month))
+
+
+@app.route('/debits')
 @login_required
-def loan_detail(loan_id):
-    conn = get_db()
-    loan = conn.execute(
-        "SELECT l.*, m.name as member_name FROM loans l JOIN members m ON m.id=l.member_id WHERE l.id=?",
-        (loan_id,),
-    ).fetchone()
-    if not loan:
-        flash("Loan not found.", "danger")
-        return redirect(url_for("loans"))
-    installments = conn.execute(
-        "SELECT * FROM loan_installments WHERE loan_id=? ORDER BY installment_no", (loan_id,)
-    ).fetchall()
-    cumulative, run = [], 0.0
-    for i in installments:
-        run += i["interest_amount"]
-        cumulative.append(round(run, 2))
-    return render_template("loan_detail.html", loan=loan, installments=installments, cumulative=cumulative)
+def debits():
+    s = store.get_settings()
+    all_members = store.list_members()
+    q = (request.args.get('q') or '').strip().lower()
+
+    all_debits = store.list_debits()
+    # Sort: most recent first, then push fully-closed debits below open ones (stable sort).
+    all_debits = sorted(all_debits, key=lambda d: d.date, reverse=True)
+    all_debits = sorted(all_debits, key=lambda d: d.closed)
+
+    debit_rows = []
+    for d in all_debits:
+        if q:
+            haystack = f'{d.member.name} {d.amount} {d.date}'.lower()
+            if q not in haystack:
+                continue
+        debit_rows.append(dict(
+            debit=d, member=d.member, months=months_elapsed(d.date),
+            interest=effective_interest(d, s.interest_rate),
+            outstanding=debit_outstanding(d, s.interest_rate),
+            paid=paid_total(d.payments),
+            overdue=is_overdue(d, s.interest_rate),
+        ))
+    member_options = []
+    for m in all_members:
+        limit = effective_debit_limit(m, s)
+        remaining = limit - member_open_principal(store.list_debits(member_id=m.id), s.interest_rate)
+        member_options.append(dict(member=m, remaining=max(0.0, remaining)))
+
+    return render_template(
+        'debits.html', debit_rows=debit_rows, member_options=member_options,
+        settings=s, today=date.today().isoformat(), active='debits', q=request.args.get('q', ''),
+    )
 
 
-@app.route("/loans/<int:loan_id>/close", methods=["POST"])
-@login_required
-def close_loan(loan_id):
-    conn = get_db()
-    loan = conn.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone()
-    if not loan or loan["status"] == "closed":
-        flash("Loan not found or already closed.", "warning")
-        return redirect(url_for("loans"))
-    member = conn.execute("SELECT * FROM members WHERE id=?", (loan["member_id"],)).fetchone()
+@app.route('/debits/add', methods=['POST'])
+@admin_required
+def add_debit():
+    s = store.get_settings()
+    member_id = int(request.form['member_id'])
+    amount = float(request.form['amount'])
+    d = parse_date_input(request.form.get('date'))
+    member = store.get_member(member_id)
 
+    limit = effective_debit_limit(member, s)
+    remaining = limit - member_open_principal(store.list_debits(member_id=member_id), s.interest_rate)
+    if amount <= 0:
+        flash('Enter a valid debit amount.')
+        return redirect(url_for('debits'))
+    if amount > remaining + 0.001:
+        flash(f'This exceeds the remaining debit limit of ₹{remaining:,.2f} for {member.name}.')
+        return redirect(url_for('debits'))
+
+    store.add_debit(member_id, amount, d, closed=False)
+    store.adjust_fund_balance(-amount)
+    log(f'Issued debit of ₹{amount:,.2f} to {member.name} on {d}.')
+    store.save()
+    return redirect(url_for('debits'))
+
+
+@app.route('/debits/<int:debit_id>/edit', methods=['GET', 'POST'])
+@admin_required
+def edit_debit(debit_id):
+    s = store.get_settings()
+    d = store.get_debit(debit_id)
+    if request.method == 'POST':
+        try:
+            amount = float(request.form['amount'])
+        except (KeyError, ValueError):
+            flash('Enter a valid amount.')
+            return redirect(url_for('edit_debit', debit_id=debit_id))
+        if amount <= 0:
+            flash('Amount must be greater than zero.')
+            return redirect(url_for('edit_debit', debit_id=debit_id))
+        new_date = parse_date_input(request.form.get('date'), fallback=d.date)
+
+        old_amount, old_date = store.update_debit(debit_id, amount=amount, debit_date=new_date)
+        if old_amount != amount:
+            # Fund balance was reduced by the original amount when issued — true up the difference.
+            store.adjust_fund_balance(old_amount - amount)
+        log(
+            f'Corrected debit for {d.member.name}: amount ₹{old_amount:,.2f} → ₹{amount:,.2f}, '
+            f'date {old_date} → {new_date}.'
+        )
+        store.save()
+        return redirect(url_for('debits'))
+    return render_template('edit_debit.html', debit=d, settings=s, active='debits')
+
+
+@app.route('/debits/<int:debit_id>/partial-pay', methods=['POST'])
+@admin_required
+def partial_pay(debit_id):
+    s = store.get_settings()
+    d = store.get_debit(debit_id)
     try:
-        closed_month_no = int(request.form.get("closed_month_no", 1))
-        interest_charged = round(float(request.form.get("interest_charged", 0)), 2)
-        amount_received = round(float(request.form.get("amount_received", 0)), 2)
-    except ValueError:
-        flash("Enter valid numbers for interest and amount received.", "danger")
-        return redirect(url_for("loan_detail", loan_id=loan_id))
-    note = request.form.get("close_note", "").strip()
+        payment_amount = float(request.form['amount'])
+    except (KeyError, ValueError):
+        payment_amount = 0
+    if payment_amount <= 0:
+        flash('Enter a valid payment amount.')
+        return redirect(url_for('debits'))
 
-    principal = loan["principal"]
-    total_due = round(principal + interest_charged, 2)
+    today = date.today()
+    interest_due = interest_accrued(d.amount, d.date, s.interest_rate, as_of=today)
+    outstanding_total = debit_outstanding(d, s.interest_rate)
 
-    if interest_charged < 0 or amount_received < 0:
-        flash("Amounts cannot be negative.", "danger")
-        return redirect(url_for("loan_detail", loan_id=loan_id))
-    if amount_received > total_due:
-        flash(f"Amount received (₹{amount_received:,.2f}) cannot exceed total due (₹{total_due:,.2f}).", "danger")
-        return redirect(url_for("loan_detail", loan_id=loan_id))
+    if payment_amount >= outstanding_total:
+        # Covers everything — same as a full repayment, no split needed.
+        applied = outstanding_total
+        store.add_debit_payment(d.id, today, applied)
+        store.adjust_fund_balance(applied)
+        store.close_debit(d.id, 'fully_repaid')
+        if payment_amount > outstanding_total + 0.01:
+            flash(f'Payment exceeded the outstanding balance of ₹{outstanding_total:,.2f} — '
+                  f'only that amount was applied and the debit was closed as fully repaid.')
+        log(f'{d.member.name} paid ₹{applied:,.2f}, fully clearing debit dated {d.date}.')
+        store.save()
+        return redirect(url_for('debits'))
 
-    # received money is applied to principal first, then interest
-    principal_received = round(min(amount_received, principal), 2)
-    interest_received = round(amount_received - principal_received, 2)
-    written_off = round(total_due - amount_received, 2)
+    if payment_amount < interest_due - 0.01:
+        flash(f'Payment must at least cover the total interest accrued so far (₹{interest_due:,.2f}).')
+        return redirect(url_for('debits'))
 
-    if written_off > 0 and not note:
-        flash("Add a note explaining the written-off amount.", "danger")
-        return redirect(url_for("loan_detail", loan_id=loan_id))
+    principal_portion = round(payment_amount - interest_due, 2)
+    remaining_principal = round(d.amount - principal_portion, 2)
 
-    today = date.today().isoformat()
-    conn.execute(
-        "UPDATE loans SET status='closed', closed_date=?, interest_charged=?, principal_received=?, "
-        "interest_received=?, written_off=?, close_note=? WHERE id=?",
-        (today, interest_charged, principal_received, interest_received, written_off, note, loan_id),
+    store.add_debit_payment(d.id, today, payment_amount)
+    store.adjust_fund_balance(payment_amount)
+    store.close_debit(d.id, 'partial_split')
+    store.add_debit(d.member_id, remaining_principal, today, closed=False)
+
+    log(
+        f'{d.member.name} partially paid ₹{payment_amount:,.2f} (₹{interest_due:,.2f} interest + '
+        f'₹{principal_portion:,.2f} principal) on debit dated {d.date}. '
+        f'Remaining ₹{remaining_principal:,.2f} rolled into a new debit dated {today}.'
     )
-    conn.execute(
-        "UPDATE loan_installments SET paid=1, paid_date=? WHERE loan_id=? AND installment_no<=?",
-        (today, loan_id, closed_month_no),
+    store.save()
+    return redirect(url_for('debits'))
+
+
+@app.route('/debits/<int:debit_id>/close', methods=['GET', 'POST'])
+@admin_required
+def close_debit(debit_id):
+    """Full payment: admin can adjust the interest, record what was actually
+    received, and write off any shortfall. Only the amount received goes into
+    the fund — written-off money is never added to it."""
+    s = store.get_settings()
+    d = store.get_debit(debit_id)
+    if d.closed:
+        flash('This debit is already closed.')
+        return redirect(url_for('debits'))
+
+    accrued = interest_accrued(d.amount, d.date, s.interest_rate)
+    already_paid = paid_total(d.payments)
+
+    if request.method == 'POST':
+        try:
+            interest = round(float(request.form['interest']), 2)
+            received = round(float(request.form['received']), 2)
+        except (KeyError, ValueError):
+            flash('Enter valid numbers for interest and amount received.')
+            return redirect(url_for('close_debit', debit_id=debit_id))
+        note = (request.form.get('note') or '').strip()
+        if interest < 0 or received < 0:
+            flash('Interest and amount received cannot be negative.')
+            return redirect(url_for('close_debit', debit_id=debit_id))
+
+        due = round(d.amount + interest - already_paid, 2)
+        if received > max(due, 0) + 0.005:
+            flash(f'Amount received (₹{received:,.2f}) is more than the balance due (₹{max(due, 0):,.2f}).')
+            return redirect(url_for('close_debit', debit_id=debit_id))
+        write_off = round(max(due, 0) - received, 2)
+        if write_off > 0 and not note:
+            flash('Add a note explaining the write-off.')
+            return redirect(url_for('close_debit', debit_id=debit_id))
+
+        if received > 0:
+            store.add_debit_payment(d.id, date.today(), received)
+            store.adjust_fund_balance(received)   # write-off is NOT added to the fund
+        store.settle_debit(d.id, interest, write_off, note)
+
+        parts = [f'Closed debit for {d.member.name} (₹{d.amount:,.2f}, dated {d.date}): '
+                 f'interest ₹{interest:,.2f}']
+        if abs(interest - accrued) > 0.005:
+            parts.append(f'(adjusted from automatic ₹{accrued:,.2f})')
+        parts.append(f'₹{received:,.2f} received and added to fund.')
+        if write_off > 0:
+            parts.append(f'₹{write_off:,.2f} written off — not added to fund. Note: {note}')
+        log(' '.join(parts))
+        store.save()
+        return redirect(url_for('debits'))
+
+    return render_template(
+        'close_debit.html', debit=d, accrued=accrued, already_paid=already_paid,
+        settings=s, active='debits',
     )
 
-    if principal_received > 0:
-        conn.execute(
-            "INSERT INTO savings_ledger (date, type, description, amount, related_member_id, related_loan_id) "
-            "VALUES (?, 'loan_principal_repaid', ?, ?, ?, ?)",
-            (today, f"Loan principal repaid by {member['name']}", principal_received, member["id"], loan_id),
+
+@app.route('/winners')
+@login_required
+def winners():
+    s = store.get_settings()
+    all_members = store.list_members()
+    all_winners = store.list_winners()
+    return render_template(
+        'winners.html', winners=all_winners, members=all_members, settings=s,
+        today=date.today().isoformat(), this_month=month_key(), active='winners',
+    )
+
+
+@app.route('/winners/add', methods=['POST'])
+@admin_required
+def add_winner():
+    s = store.get_settings()
+    member_id = int(request.form['member_id'])
+    month = request.form.get('month') or month_key()
+    amount = float(request.form.get('amount') or s.lottery)
+    d = parse_date_input(request.form.get('date'))
+    close_debit_flag = request.form.get('close_debit') == 'on'
+    member = store.get_member(member_id)
+
+    debit_closed = 0.0
+    if close_debit_flag:
+        remaining_prize = amount
+        open_debits = sorted(member_open_debits(store.list_debits(member_id=member_id)), key=lambda x: x.date)
+        for deb in open_debits:
+            if remaining_prize <= 0:
+                break
+            owed = debit_outstanding(deb, s.interest_rate)
+            pay = min(owed, remaining_prize)
+            if pay > 0:
+                store.add_debit_payment(deb.id, d, pay)
+                debit_closed += pay
+                remaining_prize -= pay
+                updated = store.get_debit(deb.id)
+                if debit_outstanding(updated, s.interest_rate) <= 0:
+                    store.close_debit(deb.id, 'fully_repaid')
+
+    cash_given = max(0.0, amount - debit_closed)
+    store.add_winner(member_id, month, amount, debit_closed, cash_given, d)
+    store.adjust_fund_balance(-amount)
+    log(f'{member.name} won the {month} lottery — ₹{amount:,.2f} prize '
+                        f'(₹{debit_closed:,.2f} closed debits, ₹{cash_given:,.2f} cash given).')
+    store.save()
+    return redirect(url_for('winners'))
+
+
+@app.route('/settings', methods=['GET', 'POST'])
+@admin_required
+def settings_view():
+    s = store.get_settings()
+    if request.method == 'POST':
+        store.update_settings(
+            contribution=float(request.form.get('contribution') or s.contribution),
+            lottery=float(request.form.get('lottery') or s.lottery),
+            lottery_day=int(request.form.get('lottery_day') or s.lottery_day),
+            debit_limit=float(request.form.get('debit_limit') or s.debit_limit),
+            interest_rate=float(request.form.get('interest_rate') or s.interest_rate),
         )
-    if interest_received > 0:
-        conn.execute(
-            "INSERT INTO savings_ledger (date, type, description, amount, related_member_id, related_loan_id) "
-            "VALUES (?, 'loan_interest_received', ?, ?, ?, ?)",
-            (today, f"Loan interest from {member['name']} (closed in month {closed_month_no})",
-             interest_received, member["id"], loan_id),
-        )
-    detail = (
-        f"{member['name']}'s ₹{principal:,.0f} loan closed (month {closed_month_no}): "
-        f"interest ₹{interest_charged:,.2f}, received ₹{amount_received:,.2f}"
-    )
-    if written_off > 0:
-        detail += f", written off ₹{written_off:,.2f} ({note})"
-    dbm.log_activity(conn, "loan_closed_with_writeoff" if written_off > 0 else "loan_closed", detail)
-    conn.commit()
-    flash("Loan closed." + (f" ₹{written_off:,.2f} written off." if written_off > 0 else ""), "success")
-    return redirect(url_for("loan_detail", loan_id=loan_id))
+        log('Updated fund settings (contribution, lottery, debit limit, or interest rate).')
+        store.save()
+        return redirect(url_for('settings_view'))
+    return render_template('settings.html', settings=s, active='settings')
 
 
-# --------------------------------------------------------------- savings --
+@app.route('/settings/fund-balance', methods=['POST'])
+@admin_required
+def update_fund_balance():
+    s = store.get_settings()
+    new_balance = float(request.form.get('fund_balance') or 0)
+    log(f'Manually adjusted fund balance from ₹{s.fund_balance:,.2f} to ₹{new_balance:,.2f}.')
+    store.set_fund_balance(new_balance)
+    store.save()
+    return redirect(url_for('settings_view'))
 
-@app.route("/savings")
+
+@app.route('/rules', methods=['GET', 'POST'])
 @login_required
-def savings():
-    conn = get_db()
-    ledger = conn.execute("SELECT * FROM savings_ledger ORDER BY id DESC").fetchall()
-    balance = dbm.savings_balance(conn)
-    return render_template("savings.html", ledger=ledger, balance=balance)
+def rules_view():
+    s = store.get_settings()
+    if request.method == 'POST':
+        if not (current_user() and current_user().role == 'admin'):
+            abort(403)
+        store.update_settings(rules_text=request.form.get('rules_text', s.rules_text))
+        log('Edited the group rules.')
+        store.save()
+        return redirect(url_for('rules_view'))
+    return render_template('rules.html', settings=s, active='rules')
 
 
-# ----------------------------------------------------------------- exits --
-
-@app.route("/exits")
-@login_required
-def exits():
-    conn = get_db()
-    all_exits = conn.execute(
-        "SELECT e.*, m.name as member_name FROM exits e JOIN members m ON m.id=e.member_id "
-        "ORDER BY e.exit_date DESC"
-    ).fetchall()
-    return render_template("exits.html", exits=all_exits)
-
-
-@app.route("/exits/new", methods=["GET", "POST"])
-@login_required
-def new_exit():
-    conn = get_db()
-    if request.method == "POST":
-        member_id = request.form.get("member_id")
-        exit_date = request.form.get("exit_date") or date.today().isoformat()
-        head_amount = float(dbm.get_setting(conn, "exit_head_amount", 1000))
-        member = conn.execute("SELECT * FROM members WHERE id=?", (member_id,)).fetchone()
-        conn.execute(
-            "INSERT INTO exits (member_id, exit_date, head_amount_required, status) "
-            "VALUES (?, ?, ?, 'pending')",
-            (member_id, exit_date, head_amount),
-        )
-        dbm.log_activity(conn, "exit_initiated", f"{member['name']} requested to leave the chit fund")
-        conn.commit()
-        flash(f"Exit process started for {member['name']}.", "success")
-        return redirect(url_for("exits"))
-    active_members = conn.execute("SELECT * FROM members WHERE active=1 ORDER BY name").fetchall()
-    return render_template("exit_form.html", members=active_members)
-
-
-@app.route("/exits/<int:exit_id>/head_amount", methods=["POST"])
-@login_required
-def exit_head_amount(exit_id):
-    conn = get_db()
-    ex = conn.execute("SELECT * FROM exits WHERE id=?", (exit_id,)).fetchone()
-    member = conn.execute("SELECT * FROM members WHERE id=?", (ex["member_id"],)).fetchone()
-    conn.execute(
-        "UPDATE exits SET head_amount_paid=1, head_amount_paid_date=? WHERE id=?",
-        (date.today().isoformat(), exit_id),
-    )
-    conn.execute(
-        "INSERT INTO savings_ledger (date, type, description, amount, related_member_id) "
-        "VALUES (?, 'exit_head_amount', ?, ?, ?)",
-        (date.today().isoformat(), f"Head-kuri amount from {member['name']} (leaving)", ex["head_amount_required"], member["id"]),
-    )
-    dbm.log_activity(conn, "exit_head_amount_received", f"₹{ex['head_amount_required']:,.0f} head amount received from {member['name']}")
-    conn.commit()
-    flash("Head amount recorded.", "success")
-    return redirect(url_for("exits"))
-
-
-@app.route("/exits/<int:exit_id>/settle", methods=["POST"])
-@login_required
-def settle_exit(exit_id):
-    conn = get_db()
-    ex = conn.execute("SELECT * FROM exits WHERE id=?", (exit_id,)).fetchone()
-    member = conn.execute("SELECT * FROM members WHERE id=?", (ex["member_id"],)).fetchone()
-    if not ex["head_amount_paid"]:
-        flash("Head-kuri amount must be collected before final settlement.", "danger")
-        return redirect(url_for("exits"))
-    settlement_amount = float(request.form.get("settlement_amount", 0))
-    conn.execute(
-        "UPDATE exits SET settlement_amount=?, settlement_date=?, status='settled' WHERE id=?",
-        (settlement_amount, date.today().isoformat(), exit_id),
-    )
-    conn.execute(
-        "UPDATE members SET active=0, left_date=? WHERE id=?",
-        (date.today().isoformat(), member["id"]),
-    )
-    dbm.log_activity(conn, "exit_settled", f"{member['name']} settled and left the chit fund (₹{settlement_amount:,.0f} paid out)")
-    conn.commit()
-    flash(f"{member['name']} has been settled and marked inactive.", "success")
-    return redirect(url_for("exits"))
-
-
-# --------------------------------------------------------------- activity --
-
-@app.route("/activity")
+@app.route('/activity')
 @login_required
 def activity():
-    conn = get_db()
-    q = request.args.get("q", "").strip()
-    if q:
-        rows = conn.execute(
-            "SELECT * FROM activity_log WHERE action LIKE ? OR details LIKE ? ORDER BY id DESC LIMIT 500",
-            (f"%{q}%", f"%{q}%"),
-        ).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT 500").fetchall()
-    return render_template("activity.html", rows=rows, q=q)
+    q = (request.args.get('q') or '').strip()
+    logs = store.list_activity(q=q, limit=500)
+    return render_template('activity.html', logs=logs, q=q, active='activity', settings=store.get_settings())
 
 
-# ------------------------------------------------------------------ main --
-
-if __name__ == "__main__":
-    dbm.init_db()
-    port = int(os.environ.get("PORT", 5004))
-    app.run(host="0.0.0.0", port=port, debug=True)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)

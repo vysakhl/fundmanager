@@ -272,6 +272,10 @@ class Store:
         d['date'] = _parse_date(d['date'])
         d['payments'] = [self._payment_ns(p) for p in self._data['debit_payments'] if p['debit_id'] == raw['id']]
         d['member'] = self.get_member(raw['member_id'])
+        # fields added later — older records won't have them
+        d.setdefault('interest_override', None)
+        d.setdefault('written_off', 0.0)
+        d.setdefault('write_off_note', None)
         return SimpleNamespace(**d)
 
     def list_debits(self, member_id=None, closed=None):
@@ -293,6 +297,7 @@ class Store:
         self._data['debits'].append({
             'id': did, 'member_id': member_id, 'amount': amount,
             'date': _iso(debit_date), 'closed': closed, 'closed_reason': None,
+            'interest_override': None, 'written_off': 0.0, 'write_off_note': None,
         })
         return did
 
@@ -307,6 +312,18 @@ class Store:
         raw = next(d for d in self._data['debits'] if d['id'] == debit_id)
         raw['closed'] = True
         raw['closed_reason'] = reason
+
+    def settle_debit(self, debit_id, interest, written_off, note):
+        """Close a debit with an admin-set interest figure and an optional
+        write-off of whatever part of the balance won't be collected."""
+        raw = next((d for d in self._data['debits'] if d['id'] == debit_id), None)
+        if raw is None:
+            raise NotFound()
+        raw['interest_override'] = interest
+        raw['written_off'] = written_off
+        raw['write_off_note'] = note or None
+        raw['closed'] = True
+        raw['closed_reason'] = 'written_off' if written_off > 0 else 'fully_repaid'
 
     def update_debit(self, debit_id, amount=None, debit_date=None):
         """Correct a mis-entered debit's amount and/or date. Returns the old

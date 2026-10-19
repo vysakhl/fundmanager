@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><h2>Debits</h2><div class="sub">Members may draw from the fund up to ₹{{ '{:,.0f}'.format(settings.debit_limit) }} outstanding at a time (some members may have a custom limit). Interest doubles each month unpaid.</div></div>
+{% if is_admin %}
+<div class="panel">
+  <h3>Issue New Debit</h3>
+  <form method="post" action="{{ url_for('add_debit') }}">
+    <div class="row">
+      <div class="field"><label>Member</label>
+        <select name="member_id">
+          {% for o in member_options %}
+            <option value="{{ o.member.id }}">{{ o.member.name }} (limit left: ₹{{ '{:,.2f}'.format(o.remaining) }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field"><label>Amount (₹)</label><input name="amount" type="number" min="1" step="1" required></div>
+      <div class="field"><label>Date</label><input name="date" type="date" value="{{ today }}"></div>
+    </div>
+    <button class="btn brass" type="submit">Issue Debit</button>
+  </form>
+  <div class="hint">Interest starts at {{ settings.interest_rate }}% for month 1, doubling every month it remains unpaid.</div>
+</div>
+{% else %}
+<div class="view-only-note">You have view-only access — issuing or settling debits is restricted to admins.</div>
+{% endif %}
+<div class="panel">
+  <h3>All Debits</h3>
+  <form method="get" action="{{ url_for('debits') }}" class="row" style="margin-bottom:16px;align-items:flex-end;">
+    <div class="field" style="max-width:320px;">
+      <label>Search</label>
+      <input name="q" value="{{ q }}" placeholder="Search by member, amount, or date">
+    </div>
+    <button class="btn ghost" type="submit">Search</button>
+    {% if q %}<a class="btn ghost" href="{{ url_for('debits') }}">Clear</a>{% endif %}
+  </form>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Member</th><th>Principal</th><th>Date</th><th>Month #</th><th>Interest</th><th>Outstanding</th><th>Total Paid</th><th>Status</th><th>Action</th></tr></thead>
+    <tbody>
+    {% for r in debit_rows %}
+      <tr class="{{ 'flag' if r.overdue else '' }}">
+        <td>{{ r.member.name }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(r.debit.amount) }}</td>
+        <td class="nowrap">{{ r.debit.date }}</td>
+        <td>{{ r.months }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(r.interest) }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(r.outstanding) }}</td>
+        <td class="num">₹{{ '{:,.2f}'.format(r.paid) }}</td>
+        <td>
+          {% if r.debit.closed %}
+            {% if r.debit.closed_reason == 'partial_split' %}<span class="tag partial">P-Paid</span>
+            {% else %}<span class="tag ok">Closed</span>{% endif %}
+          {% elif r.overdue %}<span class="tag warn">Overdue</span>
+          {% else %}<span class="tag due">Open</span>{% endif %}
+        </td>
+        <td>
+          {% if is_admin %}
+          <div class="action-group">
+            {% if not r.debit.closed %}
+            <form method="post" action="{{ url_for('partial_pay', debit_id=r.debit.id) }}" onsubmit="return partialPayPrompt(event, this, {{ r.outstanding }}, {{ r.interest }})">
+              <input type="hidden" name="amount" value="">
+              <button class="btn ghost small" type="submit">P-Pay</button>
+            </form>
+            <form method="post" action="{{ url_for('mark_fully_repaid', debit_id=r.debit.id) }}" onsubmit="return confirm('Record the full outstanding balance (₹' + {{ r.outstanding }}.toFixed(2) + ') as repaid and close this debit?');">
+              <button class="btn small" type="submit">Full Paid</button>
+            </form>
+            {% endif %}
+            <a class="btn ghost small" href="{{ url_for('edit_debit', debit_id=r.debit.id) }}">Edit</a>
+          </div>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9" class="empty">No debits recorded yet</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+<script>
+function partialPayPrompt(e, form, outstanding, interestDue){
+  const msg = 'Interest due this period: ₹' + interestDue.toFixed(2) +
+    '\nTotal outstanding: ₹' + outstanding.toFixed(2) +
+    '\n\nEnter payment amount (interest is settled first; any remainder reduces principal ' +
+    'and opens as a fresh debit dated today):';
+  const amt = prompt(msg, interestDue.toFixed(2));
+  if(!amt){ return false; }
+  form.querySelector('input[name=amount]').value = amt;
+  return true;
+}
+</script>
+{% endblock %}

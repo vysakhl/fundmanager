@@ -48,6 +48,7 @@
         <td>
           {% if r.debit.closed %}
             {% if r.debit.closed_reason == 'partial_split' %}<span class="tag partial">P-Paid</span>
+            {% elif r.debit.written_off %}<span class="tag warn" title="{{ r.debit.write_off_note }}">Written off ₹{{ '{:,.2f}'.format(r.debit.written_off) }}</span>
             {% else %}<span class="tag ok">Closed</span>{% endif %}
           {% elif r.overdue %}<span class="tag warn">Overdue</span>
           {% else %}<span class="tag due">Open</span>{% endif %}
@@ -60,9 +61,7 @@
               <input type="hidden" name="amount" value="">
               <button class="btn ghost small" type="submit">P-Pay</button>
             </form>
-            <form method="post" action="{{ url_for('mark_fully_repaid', debit_id=r.debit.id) }}" onsubmit="return confirm('Record the full outstanding balance (₹' + {{ r.outstanding }}.toFixed(2) + ') as repaid and close this debit?');">
-              <button class="btn small" type="submit">Full Paid</button>
-            </form>
+            <a class="btn small" href="{{ url_for('close_debit', debit_id=r.debit.id) }}">Full Paid</a>
             {% endif %}
             <a class="btn ghost small" href="{{ url_for('edit_debit', debit_id=r.debit.id) }}">Edit</a>
           </div>

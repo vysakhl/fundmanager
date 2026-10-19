@@ -34,16 +34,26 @@ def paid_total(payments):
     return sum(p.amount for p in payments)
 
 
+def effective_interest(debit, rate_percent, as_of=None):
+    """Interest on a debit: the admin's manual figure if one was set when
+    closing it, otherwise the automatic doubling calculation."""
+    override = getattr(debit, 'interest_override', None)
+    if override is not None:
+        return round(override, 2)
+    return interest_accrued(debit.amount, debit.date, rate_percent, as_of=as_of)
+
+
 def debit_outstanding(debit, rate_percent):
-    interest = interest_accrued(debit.amount, debit.date, rate_percent)
+    interest = effective_interest(debit, rate_percent)
     owed = debit.amount + interest
     paid = paid_total(debit.payments)
-    return max(0.0, round(owed - paid, 2))
+    written_off = getattr(debit, 'written_off', 0) or 0
+    return max(0.0, round(owed - paid - written_off, 2))
 
 
 def debit_interest_outstanding(debit, rate_percent):
     """Unpaid interest only (payments are assumed to settle interest first)."""
-    interest = interest_accrued(debit.amount, debit.date, rate_percent)
+    interest = effective_interest(debit, rate_percent)
     paid = paid_total(debit.payments)
     interest_paid = min(paid, interest)
     return max(0.0, round(interest - interest_paid, 2))
@@ -65,7 +75,7 @@ def member_open_principal(debits, rate_percent):
     """Principal still owed across a member's debits (payments assumed to settle interest first)."""
     total = 0.0
     for d in member_open_debits(debits):
-        interest = interest_accrued(d.amount, d.date, rate_percent)
+        interest = effective_interest(d, rate_percent)
         paid = paid_total(d.payments)
         principal_paid = max(0.0, paid - interest)
         total += max(0.0, d.amount - principal_paid)
