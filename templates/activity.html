@@ -15,7 +15,7 @@
     <tbody>
     {% for entry in logs %}
       <tr>
-        <td class="num">{{ entry.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="num">{{ entry.timestamp.strftime('%d-%m-%Y %H:%M') }}</td>
         <td>{{ entry.actor }}</td>
         <td>{{ entry.description }}</td>
       </tr>

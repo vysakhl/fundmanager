@@ -89,6 +89,18 @@ def month_label(month_str):
     return date(y, m, 1).strftime('%B %Y')
 
 
+def fmt_date(d):
+    """Display format for dates: DD-MM-YYYY."""
+    if d is None or d == '':
+        return ''
+    if isinstance(d, str):
+        d = datetime.strptime(d[:10], '%Y-%m-%d').date()
+    return d.strftime('%d-%m-%Y')
+
+
+app.jinja_env.filters['dmy'] = fmt_date
+
+
 def parse_date_input(s, fallback=None):
     if not s:
         return fallback or date.today()
@@ -281,7 +293,7 @@ def add_member():
     join_date = parse_date_input(request.form.get('join_date'))
     if name:
         store.add_member(name, join_date)
-        log(f'Added member "{name}" (joined {join_date}).')
+        log(f'Added member "{name}" (joined {fmt_date(join_date)}).')
         store.save()
     return redirect(url_for('members'))
 
@@ -388,7 +400,7 @@ def debits():
     debit_rows = []
     for d in all_debits:
         if q:
-            haystack = f'{d.member.name} {d.amount} {d.date}'.lower()
+            haystack = f'{d.member.name} {d.amount} {d.date} {fmt_date(d.date)}'.lower()
             if q not in haystack:
                 continue
         debit_rows.append(dict(
@@ -430,7 +442,7 @@ def add_debit():
 
     store.add_debit(member_id, amount, d, closed=False)
     store.adjust_fund_balance(-amount)
-    log(f'Issued debit of ₹{amount:,.2f} to {member.name} on {d}.')
+    log(f'Issued debit of ₹{amount:,.2f} to {member.name} on {fmt_date(d)}.')
     store.save()
     return redirect(url_for('debits'))
 
@@ -457,7 +469,7 @@ def edit_debit(debit_id):
             store.adjust_fund_balance(old_amount - amount)
         log(
             f'Corrected debit for {d.member.name}: amount ₹{old_amount:,.2f} → ₹{amount:,.2f}, '
-            f'date {old_date} → {new_date}.'
+            f'date {fmt_date(old_date)} → {fmt_date(new_date)}.'
         )
         store.save()
         return redirect(url_for('debits'))
@@ -490,7 +502,7 @@ def partial_pay(debit_id):
         if payment_amount > outstanding_total + 0.01:
             flash(f'Payment exceeded the outstanding balance of ₹{outstanding_total:,.2f} — '
                   f'only that amount was applied and the debit was closed as fully repaid.')
-        log(f'{d.member.name} paid ₹{applied:,.2f}, fully clearing debit dated {d.date}.')
+        log(f'{d.member.name} paid ₹{applied:,.2f}, fully clearing debit dated {fmt_date(d.date)}.')
         store.save()
         return redirect(url_for('debits'))
 
@@ -508,8 +520,8 @@ def partial_pay(debit_id):
 
     log(
         f'{d.member.name} partially paid ₹{payment_amount:,.2f} (₹{interest_due:,.2f} interest + '
-        f'₹{principal_portion:,.2f} principal) on debit dated {d.date}. '
-        f'Remaining ₹{remaining_principal:,.2f} rolled into a new debit dated {today}.'
+        f'₹{principal_portion:,.2f} principal) on debit dated {fmt_date(d.date)}. '
+        f'Remaining ₹{remaining_principal:,.2f} rolled into a new debit dated {fmt_date(today)}.'
     )
     store.save()
     return redirect(url_for('debits'))
@@ -556,7 +568,7 @@ def close_debit(debit_id):
             store.adjust_fund_balance(received)   # write-off is NOT added to the fund
         store.settle_debit(d.id, interest, write_off, note)
 
-        parts = [f'Closed debit for {d.member.name} (₹{d.amount:,.2f}, dated {d.date}): '
+        parts = [f'Closed debit for {d.member.name} (₹{d.amount:,.2f}, dated {fmt_date(d.date)}): '
                  f'interest ₹{interest:,.2f}']
         if abs(interest - accrued) > 0.005:
             parts.append(f'(adjusted from automatic ₹{accrued:,.2f})')
