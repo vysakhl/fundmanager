@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Loan · {{ loan.member_name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="fw-bold mb-0">{{ loan.member_name }}'s Loan</h4>
+    <p class="text-muted mb-0">Principal {{ loan.principal|money }} · taken {{ loan.taken_date }} ·
+      <span class="badge {{ 'bg-secondary' if loan.status=='closed' else 'bg-warning text-dark' }}">{{ loan.status }}</span>
+    </p>
+  </div>
+  <a href="{{ url_for('loans') }}" class="btn btn-sm btn-outline-secondary">← All loans</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card p-3">
+      <h6 class="fw-bold mb-3">Repayment tiers (interest escalates each month held)</h6>
+      <table class="table align-middle mb-0">
+        <thead><tr><th>Month</th><th>Due in</th><th>Interest</th><th>Total if closed here</th><th>Status</th></tr></thead>
+        <tbody>
+        {% set running = namespace(total=0) %}
+        {% for i in installments %}
+          {% set running.total = running.total + i.interest_amount %}
+          <tr>
+            <td>Month {{ i.installment_no }}</td>
+            <td>{{ i.due_label }}</td>
+            <td>{{ i.interest_amount|money }}</td>
+            <td>{{ (loan.principal + running.total)|money }}</td>
+            <td>
+              {% if i.paid %}<span class="badge badge-paid">Settled</span>{% else %}<span class="badge badge-unpaid">Open</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="text-muted small mt-2 mb-0">Repayment must be completed within 3 months (2 months ideal + 1 month buffer).</p>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card p-3">
+      <h6 class="fw-bold">Close Loan</h6>
+      {% if loan.status == 'closed' %}
+        <table class="table table-sm mb-0">
+          <tr><td>Closed on</td><td class="text-end">{{ loan.closed_date }}</td></tr>
+          <tr><td>Interest charged</td><td class="text-end">{{ (loan.interest_charged or 0)|money }}</td></tr>
+          <tr><td>Principal received</td><td class="text-end">{{ (loan.principal_received if loan.principal_received is not none else loan.principal)|money }}</td></tr>
+          <tr><td>Interest received</td><td class="text-end">{{ (loan.interest_received or 0)|money }}</td></tr>
+          <tr class="{{ 'table-warning' if loan.written_off }}"><td>Written off</td><td class="text-end fw-semibold">{{ (loan.written_off or 0)|money }}</td></tr>
+          {% if loan.close_note %}<tr><td>Note</td><td class="text-end">{{ loan.close_note }}</td></tr>{% endif %}
+        </table>
+      {% else %}
+        <form method="POST" action="{{ url_for('close_loan', loan_id=loan.id) }}" id="closeForm"
+              onsubmit="return confirm('Close this loan with these figures?')">
+          <div class="mb-3">
+            <label class="form-label">Closed in month</label>
+            <select name="closed_month_no" id="closedMonth" class="form-select" required>
+              {% for i in installments %}
+                <option value="{{ i.installment_no }}" data-interest="{{ cumulative[loop.index0] }}">Month {{ i.installment_no }} ({{ i.due_label }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Interest charged (₹) <span class="text-muted small">— editable</span></label>
+            <input type="number" step="0.01" min="0" name="interest_charged" id="interestCharged" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Total due (principal + interest)</label>
+            <input type="text" id="totalDue" class="form-control" readonly>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Amount received (₹)</label>
+            <input type="number" step="0.01" min="0" name="amount_received" id="amountReceived" class="form-control" required>
+          </div>
+          <div class="alert alert-warning py-2 d-none" id="writeoffBox">
+            Remaining <strong id="writeoffAmt"></strong> will be <strong>written off</strong> and the loan closed.
+          </div>
+          <div class="mb-3 d-none" id="noteWrap">
+            <label class="form-label">Write-off note (required)</label>
+            <input type="text" name="close_note" id="closeNote" class="form-control" placeholder="Reason for writing off">
+          </div>
+          <button class="btn btn-success btn-sm">Close Loan</button>
+        </form>
+        <script>
+        (function(){
+          const principal = {{ loan.principal }};
+          const sel = document.getElementById('closedMonth');
+          const interest = document.getElementById('interestCharged');
+          const due = document.getElementById('totalDue');
+          const recv = document.getElementById('amountReceived');
+          const box = document.getElementById('writeoffBox');
+          const amt = document.getElementById('writeoffAmt');
+          const noteWrap = document.getElementById('noteWrap');
+          const note = document.getElementById('closeNote');
+          let recvTouched = false;
+          function fmt(n){ return '₹' + n.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+          function recalc(){
+            const total = principal + (parseFloat(interest.value) || 0);
+            due.value = fmt(total);
+            if (!recvTouched) recv.value = total.toFixed(2);
+            const wo = Math.round((total - (parseFloat(recv.value) || 0)) * 100) / 100;
+            box.classList.toggle('d-none', wo <= 0);
+            noteWrap.classList.toggle('d-none', wo <= 0);
+            note.required = wo > 0;
+            amt.textContent = fmt(Math.max(wo, 0));
+          }
+          sel.addEventListener('change', function(){
+            interest.value = sel.selectedOptions[0].dataset.interest;
+            recvTouched = false; recalc();
+          });
+          interest.addEventListener('input', function(){ recvTouched = false; recalc(); });
+          recv.addEventListener('input', function(){ recvTouched = true; recalc(); });
+          interest.value = sel.selectedOptions[0].dataset.interest;
+          recalc();
+        })();
+        </script>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
