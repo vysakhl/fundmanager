@@ -24,7 +24,10 @@
 <div class="view-only-note">You have view-only access — issuing or settling debits is restricted to admins.</div>
 {% endif %}
 <div class="panel">
-  <h3>All Debits</h3>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <h3 style="margin:0;">All Debits</h3>
+    <a class="btn ghost small" href="{{ url_for('open_debits_pdf') }}" target="_blank">Print Open Debits (PDF)</a>
+  </div>
   <form method="get" action="{{ url_for('debits') }}" class="row" style="margin-bottom:16px;align-items:flex-end;">
     <div class="field" style="max-width:320px;">
       <label>Search</label>

@@ -2,9 +2,10 @@ import os
 from functools import wraps
 from datetime import date, datetime
 
-from flask import Flask, render_template, request, redirect, url_for, flash, session, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort, Response
 
 from store import Store
+from pdf_report import build_open_debits_pdf
 from logic import (
     months_elapsed, interest_accrued, effective_interest, debit_outstanding, debit_interest_outstanding, is_overdue,
     member_open_debits, member_open_principal, member_total_outstanding, paid_total,
@@ -420,6 +421,23 @@ def debits():
         'debits.html', debit_rows=debit_rows, member_options=member_options,
         settings=s, today=date.today().isoformat(), active='debits', q=request.args.get('q', ''),
     )
+
+
+@app.route('/debits/open.pdf')
+@login_required
+def open_debits_pdf():
+    """Downloadable PDF of every currently open debit."""
+    s = store.get_settings()
+    open_debits = sorted(store.list_debits(closed=False), key=lambda d: (d.member.name.lower(), d.date))
+    rows = [dict(
+        member=d.member.name, principal=d.amount, date=fmt_date(d.date), months=months_elapsed(d.date),
+        interest=effective_interest(d, s.interest_rate), outstanding=debit_outstanding(d, s.interest_rate),
+        paid=paid_total(d.payments), overdue=is_overdue(d, s.interest_rate),
+    ) for d in open_debits]
+    pdf = build_open_debits_pdf(rows, fmt_date(date.today()))
+    filename = f'open-debits-{fmt_date(date.today())}.pdf'
+    return Response(pdf, mimetype='application/pdf',
+                    headers={'Content-Disposition': f'inline; filename="{filename}"'})
 
 
 @app.route('/debits/add', methods=['POST'])
