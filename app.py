@@ -428,7 +428,9 @@ def debits():
 def open_debits_pdf():
     """Downloadable PDF of every currently open debit."""
     s = store.get_settings()
-    open_debits = sorted(store.list_debits(closed=False), key=lambda d: (d.member.name.lower(), d.date))
+    # Grouped by member name (A–Z); within each member, newest debit first.
+    open_debits = sorted(store.list_debits(closed=False), key=lambda d: d.date, reverse=True)
+    open_debits.sort(key=lambda d: d.member.name.lower())
     rows = [dict(
         member=d.member.name, principal=d.amount, date=fmt_date(d.date), months=months_elapsed(d.date),
         interest=effective_interest(d, s.interest_rate), outstanding=debit_outstanding(d, s.interest_rate),
