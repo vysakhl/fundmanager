@@ -1,5 +1,5 @@
 """
-Persistence layer for Money Mafia — Kuri Ledger.
+Persistence layer for Lanka Chit Fund.
 
 Two interchangeable backends, chosen automatically:
 
@@ -37,7 +37,7 @@ _lock = threading.Lock()
 DEFAULT_ADMIN_USERNAME = 'admin'
 DEFAULT_ADMIN_PASSWORD = 'admin123'  # change this immediately after first login
 
-DEFAULT_RULES = """MONEY MAFIA — KURI LEDGER — GROUP FUND RULES
+DEFAULT_RULES = """LANKA CHIT FUND — GROUP FUND RULES
 
 1. Monthly Contribution
    Every member contributes a fixed amount each month toward the common savings fund.

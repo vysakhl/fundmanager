@@ -1,4 +1,4 @@
-/* Money Mafia service worker.
+/* Lanka Chit Fund service worker.
    - Makes the site installable.
    - Caches only static files (stale-while-revalidate) and an offline page.
    - Never caches pages or data: fund figures always come live from the server. */

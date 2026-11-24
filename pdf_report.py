@@ -26,7 +26,7 @@ def _money(v):
     return f'{RUPEE}{v:,.2f}'
 
 
-def build_open_debits_pdf(rows, generated_on, fund_name='Money Mafia — Kuri Ledger'):
+def build_open_debits_pdf(rows, generated_on, fund_name='Lanka Chit Fund'):
     """rows: list of dicts with member, principal, date, months, interest,
     outstanding, paid, overdue. Returns the PDF as bytes."""
     buf = io.BytesIO()

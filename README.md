@@ -1,4 +1,4 @@
-# Money Mafia — Kuri Ledger (Python / Flask)
+# Lanka Chit Fund (Python / Flask)
 
 A fund management system for a group savings scheme: monthly contributions,
 a monthly lottery, and member debits with automatically doubling monthly interest.
