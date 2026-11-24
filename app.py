@@ -1,8 +1,9 @@
 import os
+import json
 from functools import wraps
 from datetime import date, datetime
 
-from flask import Flask, render_template, request, redirect, url_for, flash, session, abort, Response
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort, Response, send_from_directory
 
 from store import Store
 from pdf_report import build_open_debits_pdf
@@ -111,6 +112,43 @@ def parse_date_input(s, fallback=None):
 def effective_debit_limit(member, settings):
     """A member's own debit_limit overrides the group default when set."""
     return member.debit_limit if member.debit_limit is not None else settings.debit_limit
+
+
+# ---------------- PWA (installable app) ----------------
+@app.route('/manifest.webmanifest')
+def manifest():
+    data = {
+        'id': '/',
+        'name': 'Money Mafia — Kuri Ledger',
+        'short_name': 'Money Mafia',
+        'description': 'Chit fund ledger: contributions, debits, lottery and activity.',
+        'start_url': '/',
+        'scope': '/',
+        'display': 'standalone',
+        'orientation': 'portrait',
+        'background_color': '#F5EFE0',
+        'theme_color': '#16233F',
+        'icons': [
+            {'src': url_for('static', filename='icons/icon-192.png'), 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any'},
+            {'src': url_for('static', filename='icons/icon-512.png'), 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any'},
+            {'src': url_for('static', filename='icons/icon-512-maskable.png'), 'sizes': '512x512', 'type': 'image/png', 'purpose': 'maskable'},
+        ],
+    }
+    return Response(json.dumps(data), mimetype='application/manifest+json')
+
+
+@app.route('/sw.js')
+def service_worker():
+    # Served from the site root so it can control every page; never cached so updates apply quickly.
+    resp = send_from_directory(app.static_folder, 'sw.js', mimetype='application/javascript')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['Service-Worker-Allowed'] = '/'
+    return resp
+
+
+@app.route('/offline')
+def offline():
+    return render_template('offline.html')
 
 
 # ---------------- Auth routes ----------------

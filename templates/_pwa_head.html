@@ -1,0 +1,33 @@
+<link rel="manifest" href="{{ url_for('manifest') }}">
+<meta name="theme-color" content="#16233F">
+<link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Money Mafia">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>
+(function(){
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('/sw.js').catch(function(){});
+    });
+  }
+  // "Install app" button: shown only when the browser says the app can be installed
+  var deferred = null;
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault(); deferred = e;
+    document.querySelectorAll('.js-install').forEach(function(b){ b.style.display = 'inline-block'; });
+  });
+  window.addEventListener('appinstalled', function(){
+    deferred = null;
+    document.querySelectorAll('.js-install').forEach(function(b){ b.style.display = 'none'; });
+  });
+  document.addEventListener('click', function(ev){
+    var b = ev.target.closest && ev.target.closest('.js-install');
+    if (!b || !deferred) return;
+    deferred.prompt();
+    deferred.userChoice.finally(function(){ deferred = null; b.style.display = 'none'; });
+  });
+})();
+</script>

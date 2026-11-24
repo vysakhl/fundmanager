@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+{% include '_pwa_head.html' %}
 </head>
 <body>
 <div class="login-wrap">
@@ -26,6 +27,7 @@
       <div class="field"><label>Password</label><input name="password" type="password" required></div>
       <button class="btn brass" type="submit">Sign In</button>
     </form>
+    <button type="button" class="btn ghost small js-install" style="display:none;margin-top:12px;">Install app</button>
   </div>
 </div>
 </body>

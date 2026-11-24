@@ -176,3 +176,6 @@ button.btn.danger{background:var(--rust);}
 
   th,td{padding:9px 10px;font-size:13px;}
 }
+
+/* PWA install button */
+.sidebar-install{padding:10px 22px 0;}
