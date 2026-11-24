@@ -144,7 +144,10 @@ button.btn.danger{background:var(--rust);}
   }
   .topbar-brand{display:flex;align-items:center;gap:8px;flex:1;font-family:'Fraunces',serif;font-weight:700;color:var(--brass-soft);font-size:14px;letter-spacing:.03em;text-transform:uppercase;}
   .topbar-brand .mark{width:26px;height:26px;border-radius:50%;border:2px solid var(--brass);display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-weight:700;color:var(--brass);font-size:13px;}
-  .topbar-balance{font-size:13px;color:var(--brass-soft);}
+  .topbar-balance{font-size:13px;color:var(--brass-soft);white-space:nowrap;}
+  .topbar-brand{min-width:0;}
+  .topbar-brand .group-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .topbar-install{flex-shrink:0;padding:6px 11px;font-size:12px;}
 
   .hamburger{
     width:34px;height:34px;flex-shrink:0;background:none;border:1px solid rgba(245,239,224,.3);
@@ -179,3 +182,5 @@ button.btn.danger{background:var(--rust);}
 
 /* PWA install button */
 .sidebar-install{padding:10px 22px 0;}
+
+/* the top-bar Install button is mobile-only (the topbar itself is hidden on desktop) */

@@ -8,26 +8,71 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>
 (function(){
+  var ua = navigator.userAgent || '';
+  var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  var inWebView = /; wv\)/.test(ua);            // the Android APK wrapper: no install button there
+  var isIOS = /iphone|ipad|ipod/i.test(ua);
+  var deferred = null;                          // Chrome's install prompt, when it offers one
+
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function(){
       navigator.serviceWorker.register('/sw.js').catch(function(){});
     });
   }
-  // "Install app" button: shown only when the browser says the app can be installed
-  var deferred = null;
-  window.addEventListener('beforeinstallprompt', function(e){
-    e.preventDefault(); deferred = e;
-    document.querySelectorAll('.js-install').forEach(function(b){ b.style.display = 'inline-block'; });
+
+  function setVisible(show){
+    document.querySelectorAll('.js-install').forEach(function(b){ b.style.display = show ? 'inline-block' : 'none'; });
+  }
+
+  // Always offer "Install" unless the app is already installed / running as the app
+  document.addEventListener('DOMContentLoaded', function(){
+    if (!standalone && !inWebView) setVisible(true);
   });
-  window.addEventListener('appinstalled', function(){
-    deferred = null;
-    document.querySelectorAll('.js-install').forEach(function(b){ b.style.display = 'none'; });
-  });
+
+  window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); deferred = e; });
+  window.addEventListener('appinstalled', function(){ deferred = null; setVisible(false); });
+
+  // Fallback when Chrome has no one-tap prompt available: show the manual steps
+  function showHelp(){
+    if (document.getElementById('installHelp')) return;
+    var wrap = document.createElement('div');
+    wrap.id = 'installHelp';
+    wrap.style.cssText = 'position:fixed;inset:0;background:rgba(22,35,63,.6);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;';
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#fffdf7;color:#16233f;border-radius:12px;padding:22px;max-width:340px;width:100%;font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;';
+    var steps = isIOS
+      ? ['Tap the Share button in Safari.', 'Choose "Add to Home Screen".', 'Tap Add.']
+      : ['Tap the \u22EE menu at the top-right of Chrome.', 'Choose "Install app" (or "Add to Home screen").', 'Tap Install.'];
+    var h = document.createElement('div');
+    h.textContent = 'Install Lanka Chit Fund';
+    h.style.cssText = 'font-weight:700;font-size:16px;margin-bottom:10px;';
+    var ol = document.createElement('ol');
+    ol.style.cssText = 'margin:0 0 14px 18px;padding:0;';
+    steps.forEach(function(s){ var li = document.createElement('li'); li.textContent = s; ol.appendChild(li); });
+    var note = document.createElement('div');
+    note.textContent = isIOS ? '' : 'Use Chrome. If you don\u2019t see the option, update Chrome and reload this page.';
+    note.style.cssText = 'color:#5b6577;font-size:12.5px;margin-bottom:14px;';
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Got it';
+    close.style.cssText = 'width:100%;padding:11px;border:0;border-radius:8px;background:#b07d2a;color:#fff;font-weight:600;font-size:14px;';
+    close.addEventListener('click', function(){ wrap.remove(); });
+    wrap.addEventListener('click', function(ev){ if (ev.target === wrap) wrap.remove(); });
+    card.appendChild(h); card.appendChild(ol);
+    if (note.textContent) card.appendChild(note);
+    card.appendChild(close); wrap.appendChild(card);
+    document.body.appendChild(wrap);
+  }
+
   document.addEventListener('click', function(ev){
     var b = ev.target.closest && ev.target.closest('.js-install');
-    if (!b || !deferred) return;
-    deferred.prompt();
-    deferred.userChoice.finally(function(){ deferred = null; b.style.display = 'none'; });
+    if (!b) return;
+    if (deferred) {
+      var p = deferred; deferred = null;
+      p.prompt();
+    } else {
+      showHelp();
+    }
   });
 })();
 </script>
