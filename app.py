@@ -119,8 +119,8 @@ def effective_debit_limit(member, settings):
 def manifest():
     data = {
         'id': '/',
-        'name': 'Money Mafia — Kuri Ledger',
-        'short_name': 'Money Mafia',
+        'name': 'Chit Fund',
+        'short_name': 'Chit Fund',
         'description': 'Chit fund ledger: contributions, debits, lottery and activity.',
         'start_url': '/',
         'scope': '/',
