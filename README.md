@@ -21,11 +21,6 @@ a monthly lottery, and member debits with automatically doubling monthly interes
 
 The app now requires login. On first run it creates one default admin account:
 
-```
-username: admin
-password: admin123
-```
-
 **Change this password immediately** after first login — go to *My Account* in the
 sidebar. From the *Logins* page (admin-only), you can create additional accounts:
 
